@@ -163,9 +163,7 @@ class TaskScheduler:
     def start(self) -> None:
         """Start the scheduler with configured tasks."""
         try:
-            from apscheduler.schedulers.background import (
-                BackgroundScheduler,
-            )
+            from apscheduler.schedulers.background import BackgroundScheduler  # type: ignore[import-not-found]
         except ImportError:
             logger.warning(
                 "APScheduler not installed; scheduled tasks disabled. "
@@ -348,11 +346,9 @@ class TaskScheduler:
     def _build_trigger(self, task_config: dict) -> Any:
         """Build an APScheduler trigger from task config."""
         try:
-            from apscheduler.triggers.cron import CronTrigger
-            from apscheduler.triggers.date import DateTrigger
-            from apscheduler.triggers.interval import (
-                IntervalTrigger,
-            )
+            from apscheduler.triggers.interval import IntervalTrigger  # type: ignore[import-not-found]
+            from apscheduler.triggers.cron import CronTrigger  # type: ignore[import-not-found]
+            from apscheduler.triggers.date import DateTrigger  # type: ignore[import-not-found]
         except ImportError:
             return None
 

@@ -19,11 +19,11 @@ import asyncio
 import logging
 import os
 import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
+from collections.abc import Callable
 
-from kb_mcp_lite.md_io import _coerce_links, doc_from_frontmatter, parse_frontmatter
+from kb_mcp_lite.md_io import parse_frontmatter, doc_from_frontmatter, _coerce_links
 from kb_mcp_lite.schema import NotFoundError
 from kb_mcp_lite.store.sqlite import SqliteStore
 from kb_mcp_lite.vault import VaultManager

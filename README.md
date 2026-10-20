@@ -5,7 +5,7 @@
 
 `pip install kb-mcp-lite` — 让任何AI编程助手都拥有结构化、可查询、可同步的团队"第二大脑"
 
-[![PyPI version](https://img.shields.io/badge/pypi-v0.9.0-blue)](https://pypi.org/project/kb-mcp-lite/)
+[![PyPI version](https://img.shields.io/badge/pypi-v0.8.0-blue)](https://pypi.org/project/kb-mcp-lite/)
 [![Python](https://img.shields.io/badge/python-≥3.10-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-兼容-purple)](https://modelcontextprotocol.io/)
@@ -67,17 +67,17 @@
 
 ### 3. 🔍 多模式智能搜索
 支持四种搜索模式，满足不同场景的查询需求：
-- **词法搜索（默认）**：基于 SQLite FTS5，BM25 排序，中英文混合优化，精准匹配关键词，适合查找确定的技术点与专有名词
-- **模糊搜索**：基于 Trigram 索引，容错拼写错误、缩写、别名，适合模糊记忆的查询
-- **语义搜索（需安装 `kb-mcp-lite[vec]`）**：基于 `sqlite-vec` 向量扩展，支持自然语言向量嵌入与语义距离匹配，适合通过模糊概念查找相关知识
-- **混合检索（RRF 融合）**：倒数排名融合（Reciprocal Rank Fusion）算法，智能加权词法、模糊与向量检索，自动优雅降级（未启用向量扩展时自动使用 FTS 混合）
+- **词法搜索（默认）**：基于SQLite FTS5，BM25排序，精准匹配关键词，适合查找确定的技术点
+- **模糊搜索**：基于trigram索引，容错拼写错误、缩写、别名，适合模糊记忆的查询
+- **语义搜索（可选）**：安装 `sqlite-vec` 扩展后支持，支持自然语言语义匹配，适合模糊问题查找相关知识
+- **混合搜索**：融合词法、模糊、语义三种搜索结果，使用倒数排名融合（RRF）算法，提供最佳综合搜索结果
 
 **搜索能力特性**：
-- 支持按文档类型、标签精确过滤
+- 支持按文档类型、标签过滤
 - 支持 `vault="*"` 跨库联合搜索
-- 自动关联相关文档的反向链接与一跳邻居节点
-- 搜索结果返回完整结构化信息与相关度评分，AI 可以直接消费
-- 语义搜索采用异步嵌入队列机制，后台静默索引，不阻塞前台文档增删改写入
+- 自动关联相关文档的反向链接
+- 搜索结果返回完整的结构化信息，AI可以直接使用
+- 支持图扩展选项，自动显示相关文档
 
 ---
 
@@ -135,23 +135,12 @@
 
 ---
 
-### 10. 🖥️ 现代化 Web 管理控制台 (SPA)
-内置基于 React + Tailwind CSS + HeroUI 打造的现代化管理后台（`kb admin start` 自动启动）：
-- **深色/浅色主题适配**：完美支持系统与手动切换，高对比度排版与磨砂玻璃质感；
-- **知识图谱可视化**：基于 `vis-network` 的交互式关系图谱拓扑展示，支持节点筛选、高亮与多跳关系钻取；
-- **文档全生命周期管理**：提供实时双栏 Markdown 协同编辑器、文档标签/类型过滤、版本差异对比（Diff Viewer）及一键历史回滚；
-- **关系边与语义动词管理**：带中文解释的标准关联动词选择器，直观建立文档间的前后置依赖、规范约束及决策替代链；
-- **Git 同步与冲突可视化**：实时检查本地 SQLite 数据库与 Git 工作区状态，可视化查看未提交文档差异，支持一键拉取（Pull）与推送（Push）；
-- **任务调度与健康看板**：直观管理 APScheduler 自动化任务状态、嵌入队列进度及知识库健康诊断修复。
-
----
-
-### 11. 🌐 MCP协议原生支持 (25工具/13资源/7提示)
+### 9. 🌐 MCP协议原生支持 (25工具/13资源/7提示)
 完全兼容MCP（Model Context Protocol）标准协议，任何支持MCP的客户端（Claude Desktop、Cursor、Composio等）都可以直接接入，AI自动获得以下能力：
 #### 25个内置工具
 | 工具名称 | 功能说明 | AI使用场景 |
 |---|---|---|
-| `kb_add` | 创建文档 (支持 `aliases`, `metadata`, `source`) | AI学习到新知识后，自动沉淀结构化事实到知识库 |
+| `kb_add` | 创建文档 (支持 `aliases`, `metadata`, `source`, `id`) | AI学习到新知识后，自动沉淀结构化事实到知识库 |
 | `kb_get` | 获取文档详情 (支持 `vault` 参数) | AI按需拉取完整内容或指定章节，节省上下文 Token |
 | `kb_update` | 更新文档 (支持 `aliases`, `metadata`, `source`) | 文档内容过时，AI自动更新补充 |
 | `kb_delete` | 软删除文档 | 废弃的文档，AI可以删除 |
@@ -180,7 +169,7 @@
 | `kb_diff_check` | Git差异分析 | AI分析代码变更并推荐相关文档 |
 
 > 批量导入/导出、`prune`、`reindex`、vault 和 Git 同步属于 CLI/Admin 生命周期能力，不会作为 MCP 文件系统工具暴露。
-
+kb
 #### 13个结构化资源
 | 资源URI | 返回内容 |
 |---|---|
@@ -212,37 +201,19 @@
 ---
 
 ## 🚀 快速开始使用
-### 🔧 安装方式与依赖选项
-
-`kb-mcp-lite` 默认采用纯净无 C 扩展的基础安装，保证极速且 100% 跨平台兼容。你可以根据功能需求选择安装对应的可选扩展包：
-
-#### 1. 推荐方式：通过 `uv tool` 安装 CLI / MCP 服务
+### 🔧 安装
 ```bash
-# 基础安装（包含 FTS5 全文检索、模糊搜索、多 Vault、Git 同步及 Web 控制台）
-uv tool install kb-mcp-lite
-
-# 🌟 推荐：安装包含向量/语义搜索支持（自动集成 sqlite-vec + pysqlite3）
-uv tool install "kb-mcp-lite[vec]"
-
-# 🚀 全功能完整版（包含向量语义搜索 + 原生事件驱动文件监听 watchfiles）
-uv tool install "kb-mcp-lite[vec,v0_8]"
-```
-
-#### 2. 通过 `pip` 安装
-```bash
-# 基础安装
 pip install kb-mcp-lite
 
-# 开启语义搜索 (Semantic / Vector Search)
-pip install "kb-mcp-lite[vec]"
+# 可选安装语义搜索支持（需要SQLite扩展支持）
+pip install kb-mcp-lite[vec]
 
-# 开启全功能扩展 (包含 vec 与高性能文件监听)
-pip install "kb-mcp-lite[vec,v0_8]"
+# 可选安装事件驱动文件监听（Linux/macOS/Windows原生支持）
+pip install kb-mcp-lite[v0_8]
+
+# 安装所有可选依赖
+pip install kb-mcp-lite[vec,v0_8]
 ```
-
-> **📌 依赖扩展说明**：
-> - **`kb-mcp-lite[vec]`**：包含 `sqlite-vec` 与 `pysqlite3`。如果需要在 Web 控制台或 MCP 中使用 `semantic`（向量语义检索）或更高精度的 `hybrid`（混合排序），**必须安装此扩展**。未安装时系统将自动降级为 FTS5 全文及模糊检索。
-> - **`kb-mcp-lite[v0_8]`**：包含 `watchfiles`（Rust 实现的原生文件系统事件监听，支持 Linux inotify、macOS FSEvents、Windows ReadDirectoryChangesW）。未安装时 `kb watch` 将自动回退为 1 秒间隔的轮询监听。
 
 ### 个人用户基础使用
 #### 1. 初始化知识库
@@ -471,18 +442,16 @@ hooks:
 ```python
 from kb_mcp_lite.schema import Document, Field
 
-
 class ApiDoc(Document):
     """API接口文档类型"""
-
     type: str = "api"
     id_prefix: str = "api"
-
+    
     # 自定义字段
     endpoint: str = Field(description="接口路径")
     method: str = Field(description="HTTP方法")
     version: str = Field(description="接口版本")
-
+    
     class Config:
         schema_extra = {
             "example": {
@@ -491,7 +460,7 @@ class ApiDoc(Document):
                 "method": "GET",
                 "version": "v1",
                 "tags": ["user", "api"],
-                "body": "接口返回用户的基本信息...",
+                "body": "接口返回用户的基本信息..."
             }
         }
 ```
@@ -578,10 +547,9 @@ src/kb_mcp_lite/
 │   └── connection.py   # Shared sqlite3 connection factory
 ├── md_io.py            # Markdown frontmatter parser + bulk import/export
 ├── vault.py            # Multi-vault management
-├── admin/              # FastAPI 后端与静态托管
+├── admin/              # FastAPI web UI
 │   ├── routes_docs.py  # Document CRUD + search
 │   └── routes_meta.py  # Overview, links, graph, settings
-├── static/app/         # 构建后的现代化 SPA 静态资源
 ├── migrations/         # Forward-only SQL migration runner
 ├── config.py           # XDG config loader
 ├── embedder.py         # OpenAI-compatible embedding client
@@ -596,12 +564,6 @@ src/kb_mcp_lite/
 ├── migrations.py       # Forward-only SQL migration runner
 └── concurrency/
     └── write_lock.py   # Cross-process flock-based write lock
-
-web/                    # 前端单页应用源码 (React + Tailwind + HeroUI)
-├── src/                # 前端组件与页面
-│   ├── pages/          # Documents, DocDetail, Git, Links, Graph, Scheduler 等
-│   └── components/     # MarkdownRenderer, DiffViewer, Badges 等
-└── package.json        # 前端构建配置
 ```
 
 ---

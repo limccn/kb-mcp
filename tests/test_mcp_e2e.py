@@ -18,13 +18,14 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from collections.abc import Iterator
 
 import pytest
 
 from kb_mcp_lite.md_io import parse_frontmatter
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -179,6 +180,10 @@ def mcp_proc(tmp_db: Path) -> Iterator[subprocess.Popen]:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        # The server's stdio transport writes UTF-8 (measured: the Chinese
+        # labels of kb_rel_spec decode as UTF-8, and cp932 fails at 0x85).
+        # The locale default would break on any non-ASCII response.
+        encoding="utf-8",
         env=env,
     )
     try:
@@ -261,8 +266,6 @@ class TestDiscovery:
             "kb_schedule_run",
             "kb_schedule_history",
         }
-        kb_add_tool = next(t for t in tools if t["name"] == "kb_add")
-        assert "id" not in kb_add_tool["inputSchema"]["properties"]
 
 
 # ---------------------------------------------------------------------------
@@ -311,16 +314,6 @@ class TestKbAdd:
         err = _extract_error(resp)
         assert err is not None, f"Expected validation error, got: {resp}"
         assert err[0] == -32602, f"Expected -32602, got {err[0]}"
-
-    def test_add_ignores_explicit_id(self, mcp_proc: subprocess.Popen) -> None:
-        """Explicit id is ignored; document id is always auto-generated from (type, title)."""
-        resp = _call_tool(
-            mcp_proc,
-            "kb_add",
-            {"type": "project", "title": "Auto Id Only", "id": "custom-id"},
-        )
-        data = _extract_result(resp)
-        assert data["id"] == "auto-id-only"
 
 
 # ---------------------------------------------------------------------------
@@ -486,21 +479,22 @@ class TestDiagnostics:
         assert len(data["checks"]) >= 4
 
     def test_similar(self, mcp_proc: subprocess.Popen) -> None:
-        """kb_similar returns an empty result set when no embedder is enabled."""
+        """kb_similar must report the missing embedder, not an empty result set."""
         _call_tool(mcp_proc, "kb_add", {"type": "project", "title": "SimilarSource"})
         resp = _call_tool(mcp_proc, "kb_similar", {"id": "similarsource"})
-        data = _extract_result(resp)
-        assert data["id"] == "similarsource"
-        assert data["results"] == []
-        assert data["count"] == 0
+        err = _extract_error(resp)
+        assert err is not None, f"expected error without embedder, got: {resp}"
+        assert err[0] == -32602
+        assert "embedder" in err[1].lower()
 
     def test_duplicates(self, mcp_proc: subprocess.Popen) -> None:
-        """kb_duplicates returns an empty pair list when vectors are unavailable."""
+        """kb_duplicates must report the missing embedder, not an empty pair list."""
         _call_tool(mcp_proc, "kb_add", {"type": "project", "title": "DupSource"})
         resp = _call_tool(mcp_proc, "kb_duplicates", {})
-        data = _extract_result(resp)
-        assert data["pairs"] == []
-        assert data["count"] == 0
+        err = _extract_error(resp)
+        assert err is not None, f"expected error without embedder, got: {resp}"
+        assert err[0] == -32602
+        assert "embedder" in err[1].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -855,3 +849,30 @@ class TestKbEmbedAdmin:
         resp = _call_tool(mcp_proc, "kb_embed_retry", {"doc_id": "never/queued"})
         data = _extract_result(resp)
         assert data == {"ok": True, "retried": 0, "doc_id": "never/queued"}
+
+
+# ---------------------------------------------------------------------------
+# kb_rel_spec (v0.8 特性 #6)
+# ---------------------------------------------------------------------------
+
+
+class TestKbRelSpec:
+    """The standard vocabulary through the MCP face, incl. tree ``contains``."""
+
+    def test_contains_visible(self, mcp_proc: subprocess.Popen) -> None:
+        """List mode counts 11 with contains present; show mode returns its fields."""
+        resp = _call_tool(mcp_proc, "kb_rel_spec", {})
+        data = _extract_result(resp)
+        assert isinstance(data, dict)
+        assert data["count"] == 11
+        assert "contains" in {r["name"] for r in data["relations"]}
+
+        resp = _call_tool(mcp_proc, "kb_rel_spec", {"rel_name": "contains"})
+        spec = _extract_result(resp)
+        assert spec["name"] == "contains"
+        assert spec["forward_label"] == "包含了"
+        assert spec["backward_label"] == "隶属于"
+        assert spec["default_direction"] == "forward"
+        assert spec["traversal_cost"] == 0.5
+        assert spec["is_influence"] is False
+        assert spec["is_supersession"] is False

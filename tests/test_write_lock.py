@@ -18,6 +18,7 @@ from kb_mcp_lite.concurrency import (
 from kb_mcp_lite.concurrency.write_lock import write_lock
 from kb_mcp_lite.schema import KbMcpError
 
+
 # ---------------------------------------------------------------------------
 # Module-level fixtures and constants
 # ---------------------------------------------------------------------------

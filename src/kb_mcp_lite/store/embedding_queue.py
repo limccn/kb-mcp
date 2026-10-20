@@ -38,10 +38,10 @@ from __future__ import annotations
 import logging
 import sqlite3
 import time
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from collections.abc import Iterable
 
 logger = logging.getLogger("kb_mcp_lite.store.embedding_queue")
 

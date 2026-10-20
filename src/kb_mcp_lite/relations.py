@@ -136,6 +136,16 @@ STANDARD_RELATIONS: dict[str, RelationSpec] = {
         is_supersession=False,
         description="通过 tag 关联的同主题文档",
     ),
+    "contains": RelationSpec(
+        name="contains",
+        forward_label="包含了",
+        backward_label="隶属于",
+        default_direction="forward",
+        traversal_cost=0.5,
+        is_influence=False,
+        is_supersession=False,
+        description="目录树关系，kb ingest 生成",
+    ),
 }
 
 
@@ -153,7 +163,7 @@ def resolve_relation(name: str) -> RelationSpec:
 # Impact analyzer
 # ---------------------------------------------------------------------------
 
-from kb_mcp_lite.schema import Document
+from kb_mcp_lite.schema import Document  # noqa: E402 (avoid circular)
 
 
 @dataclass

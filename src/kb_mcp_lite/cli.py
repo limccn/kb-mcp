@@ -1,31 +1,38 @@
 """Command-line interface."""
 
-import functools
-import json
 import os
 import sys
-from collections.abc import Callable
+import json
+import functools
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import cast, Any, TypeVar
+from collections.abc import Callable
 
 import click
 from pydantic import ValidationError
 
 from kb_mcp_lite import __version__
-from kb_mcp_lite.concurrency import ResourceBusyError
 from kb_mcp_lite.config import load_config as get_config
-from kb_mcp_lite.md_io import export_dir, import_dir
+from kb_mcp_lite.md_io import import_dir, export_dir
+from kb_mcp_lite.ingest import (
+    ConverterNotFoundError,
+    ConverterRunError,
+    ConverterValidationError,
+    run_ingest,
+)
 from kb_mcp_lite.schema import (
     Document,
-    DuplicateError,
     KbMcpError,
     NotFoundError,
+    DuplicateError,
 )
+from kb_mcp_lite.concurrency import ResourceBusyError
 from kb_mcp_lite.vault import (
     VaultAlreadyExistsError,
     VaultManager,
     VaultNotFoundError,
 )
+
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -844,6 +851,168 @@ def import_cmd(ctx: click.Context, directory: str, dry_run: bool, as_json: bool)
                 click.echo(f"  - {err}")
 
 
+# ---- kb ingest ---------------------------------------------------------------
+
+
+@cli.command()
+@click.argument("directory", required=False,
+                type=click.Path(exists=True, file_okay=False, dir_okay=True))
+@click.option(
+    "--file",
+    "-f",
+    "file_path",
+    default=None,
+    type=click.Path(exists=True, file_okay=True, dir_okay=False),
+    help="Convert this one file instead of a folder; its folder becomes the root.",
+)
+@click.option(
+    "--ziped",
+    "-z",
+    "zip_path",
+    default=None,
+    type=click.Path(exists=True, file_okay=True, dir_okay=False),
+    help="Convert the members of this .zip archive instead of a folder; the "
+         "archive's folder becomes the root. The archive is unpacked by the "
+         "converter (one level; nested archives are skipped).",
+)
+@click.option(
+    "--out",
+    "out_dir",
+    required=True,
+    type=click.Path(file_okay=False),
+    help="Directory for the import-ready Markdown tree (written by the converter).",
+)
+@click.option(
+    "--vault",
+    "vault_name",
+    default=None,
+    help="Also import the converted tree into this vault (created if missing).",
+)
+@click.option(
+    "--type",
+    "doc_type",
+    default=None,
+    help="frontmatter type for generated documents (converter default: spec).",
+)
+@click.option(
+    "--incremental/--no-incremental",
+    "incremental",
+    default=None,
+    help=(
+        "Forward incremental mode to the converter (on by default: unchanged files "
+        "are skipped, outputs of vanished sources are pruned). --no-incremental "
+        "forces a full reconversion; no flag is forwarded unless given."
+    ),
+)
+@click.option(
+    "--converter",
+    "converter",
+    default=None,
+    help=(
+        "Conversion command (an executable or .cmd). Default: $KB_INGEST_CONVERTER, "
+        "then the repo's ingestion-rt\\doc-convert.exe or ingestion venv."
+    ),
+)
+@_json_option
+@click.pass_context
+@_handle_errors
+def ingest(
+    ctx: click.Context,
+    directory: str | None,
+    out_dir: str,
+    file_path: str | None,
+    zip_path: str | None,
+    vault_name: str | None,
+    doc_type: str | None,
+    incremental: bool | None,
+    converter: str | None,
+    as_json: bool,
+) -> None:
+    """Convert a folder -- or one file, or one .zip archive -- to Markdown.
+
+    Give exactly one of DIRECTORY, --file or --ziped. The tree mirrors the
+    input's root: for the single-input forms that is the named file's own
+    folder, so `kb ingest -f /docs/a.docx` and `kb ingest /docs` (a folder
+    holding nothing else) produce the same tree, manifest included.
+
+    Conversion is delegated to the external ingestion converter (an executable
+    or .cmd: --converter, then $KB_INGEST_CONVERTER, then the dev checkout's
+    converter) and is incremental by default -- unchanged files are skipped
+    and outputs of vanished sources are pruned; --no-incremental forces a full
+    reconversion. With --vault the tree is then imported into that vault
+    (created on first use). Exit code 1 means a file failed to convert or an
+    import error was recorded -- the same "command ok, content not" split as
+    the sibling ingestion tools.
+    """
+    given = [value for value in (directory, file_path, zip_path) if value]
+    if len(given) != 1:
+        click.echo(
+            "Validation error: give exactly one of DIRECTORY, --file, --ziped "
+            f"(got {len(given)})", err=True)
+        sys.exit(EXIT_VALIDATION)
+    target = given[0]
+    if directory is not None:
+        mode = "dir"
+    elif file_path is not None:
+        mode = "file"
+    else:
+        mode = "zip"
+        if Path(target).suffix.lower() != ".zip":
+            click.echo(f"Validation error: --ziped takes a .zip archive: {target}",
+                       err=True)
+            sys.exit(EXIT_VALIDATION)
+
+    try:
+        result = run_ingest(
+            Path(target),
+            Path(out_dir),
+            vault_name=vault_name,
+            doc_type=doc_type,
+            incremental=incremental,
+            converter=converter,
+            vault_manager=ctx.obj["vault_manager"],
+            mode=mode,
+        )
+    except ConverterValidationError as e:
+        click.echo(f"Validation error: {e}", err=True)
+        sys.exit(EXIT_VALIDATION)
+    except ConverterNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(EXIT_NOT_FOUND)
+    except ConverterRunError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(EXIT_INTERNAL)
+
+    if as_json:
+        _emit_json(result.to_dict())
+    else:
+        click.echo(
+            f"{result.converted} converted, {result.failed} failed, "
+            f"{len(result.skipped)} skipped, {result.unchanged} unchanged, "
+            f"{result.pruned} pruned"
+        )
+        for line in result.notable_lines:
+            click.echo(line)
+        click.echo(f"tree: {result.out}")
+        if result.enrich is not None:
+            click.echo(result.enrich.summary())
+        if result.import_summary is not None:
+            imp = result.import_summary
+            click.echo(f"vault: {imp.vault} ({'created' if imp.created else 'exists'})")
+            click.echo(
+                f"Imported {imp.inserted + imp.updated} files: "
+                f"{imp.inserted} inserted, {imp.updated} updated"
+            )
+            if imp.skipped > 0:
+                click.echo(f"Skipped {imp.skipped} files")
+            if imp.errors:
+                click.echo("Errors:")
+                for err in imp.errors:
+                    click.echo(f"  - {err}")
+    if result.returncode != 0:
+        sys.exit(result.returncode)
+
+
 # ---- kb export ---------------------------------------------------------------
 
 
@@ -1074,26 +1243,94 @@ def prune(ctx: click.Context, older_than: int, as_json: bool) -> None:
 @cli.command()
 @click.option("--log-level", default="INFO", show_default=True, help="Log level.")
 @click.option("--vault", help="Vault name to serve.")
+@click.option(
+    "--transport",
+    type=click.Choice(["stdio", "http"]),
+    default="stdio",
+    show_default=True,
+    help="Transport to serve on. 'http' is streamable HTTP on /mcp.",
+)
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    show_default=True,
+    envvar="KB_MCP_HTTP_HOST",
+    show_envvar=True,
+    help="Interface to bind (http transport only).",
+)
+@click.option(
+    "--port",
+    default=8000,
+    show_default=True,
+    type=int,
+    envvar="KB_MCP_HTTP_PORT",
+    show_envvar=True,
+    help="Port to bind (http transport only).",
+)
 @click.pass_context
 @_handle_errors
-def serve(ctx: click.Context, log_level: str, vault: str | None) -> None:
-    """Start the MCP server on stdio."""
+def serve(
+    ctx: click.Context,
+    log_level: str,
+    vault: str | None,
+    transport: str,
+    host: str,
+    port: int,
+) -> None:
+    """Start the MCP server on stdio, or on streamable HTTP with --transport http.
+
+    The http transport requires the KB_MCP_HTTP_TOKEN environment variable; it
+    refuses to start when the variable is missing or empty. The bind address and
+    port also come from KB_MCP_HTTP_HOST / KB_MCP_HTTP_PORT; an explicit
+    --host / --port wins over the environment.
+    """
     from kb_mcp_lite.mcp_server import run as run_mcp_server
 
     if log_level:
         os.environ["KB_MCP_LOG_LEVEL"] = log_level
     if vault:
         os.environ["KB_MCP_VAULT"] = vault
-    run_mcp_server()
+    run_mcp_server(vault=vault, transport=transport, host=host, port=port)
 
 
-@cli.command(name="mcp", help="Alias for 'serve'. Start the MCP server on stdio.")
+@cli.command(name="mcp", help="Alias for 'serve'. Start the MCP server.")
 @click.option("--log-level", default="INFO", show_default=True, help="Log level.")
 @click.option("--vault", help="Vault name to serve.")
+@click.option(
+    "--transport",
+    type=click.Choice(["stdio", "http"]),
+    default="stdio",
+    show_default=True,
+    help="Transport to serve on. 'http' is streamable HTTP on /mcp.",
+)
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    show_default=True,
+    envvar="KB_MCP_HTTP_HOST",
+    show_envvar=True,
+    help="Interface to bind (http transport only).",
+)
+@click.option(
+    "--port",
+    default=8000,
+    show_default=True,
+    type=int,
+    envvar="KB_MCP_HTTP_PORT",
+    show_envvar=True,
+    help="Port to bind (http transport only).",
+)
 @click.pass_context
 @_handle_errors
-def mcp_alias(ctx: click.Context, log_level: str, vault: str | None) -> None:
-    """Start the MCP server on stdio."""
+def mcp_alias(
+    ctx: click.Context,
+    log_level: str,
+    vault: str | None,
+    transport: str,
+    host: str,
+    port: int,
+) -> None:
+    """Start the MCP server on stdio, or on streamable HTTP with --transport http."""
     ctx.forward(serve)
 
 
@@ -1103,6 +1340,7 @@ def mcp_alias(ctx: click.Context, log_level: str, vault: str | None) -> None:
 @cli.group(name="vault")
 def vault_group() -> None:
     """Manage multiple isolated knowledge bases (vaults)."""
+    pass
 
 
 @vault_group.command(name="list")
@@ -1259,6 +1497,7 @@ def vault_sync(ctx: click.Context, message: str, remote: str, branch: str) -> No
 @cli.group(name="admin")
 def admin_group() -> None:
     """Web administration interface commands."""
+    pass
 
 
 @admin_group.command(name="start")
@@ -1466,12 +1705,12 @@ if __name__ == "__main__":
 
 
 __all__ = [
-    "EXIT_CONFLICT",
-    "EXIT_INTERNAL",
-    "EXIT_NOT_FOUND",
-    "EXIT_OK",
-    "EXIT_USAGE",
-    "EXIT_VALIDATION",
     "cli",
     "main",
+    "EXIT_OK",
+    "EXIT_VALIDATION",
+    "EXIT_NOT_FOUND",
+    "EXIT_CONFLICT",
+    "EXIT_INTERNAL",
+    "EXIT_USAGE",
 ]

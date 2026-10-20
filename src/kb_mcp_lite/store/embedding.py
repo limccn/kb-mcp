@@ -26,7 +26,16 @@ class EmbeddingMixin:
     # ---- embedding / similarity helpers ---------------------------------
 
     def similar_docs(self, doc_id: str, limit: int = 10) -> list[tuple[Document, float]]:
-        """Return documents most similar to ``doc_id`` by embedding cosine distance."""
+        """Return documents most similar to ``doc_id`` by embedding cosine distance.
+
+        Raises:
+            NotFoundError: no such document.
+            ValidationError: similarity is unavailable — the embedder is
+                disabled, the vec0 extension is missing, or ``doc_id`` has
+                no stored embedding. An empty list is a legitimate answer
+                ("no other similar documents"); these three unavailable
+                causes must not be mistaken for it.
+        """
         row = self._conn.execute(
             "SELECT rowid FROM documents WHERE id = ? AND deleted_at IS NULL",
             (doc_id,),
@@ -34,19 +43,25 @@ class EmbeddingMixin:
         if row is None:
             raise NotFoundError(doc_id)
 
+        emb = getattr(self, "_embedder", None)
+        if emb is None or not getattr(emb, "enabled", False):
+            raise ValidationError("similar-document lookup requires an enabled embedder")
         vec_conn = self._vec_conn_lazy()
         if vec_conn is None:
-            return []
+            raise ValidationError("vec0 extension not available; similar-document lookup disabled")
 
         try:
             emb_row = vec_conn.execute(
                 "SELECT embedding FROM docs_vec WHERE rowid = ?",
                 (row[0],),
             ).fetchone()
-        except Exception:
-            return []
+        except Exception as e:  # noqa: BLE001 — surface the failure, don't hide it
+            raise ValidationError(f"similar-document lookup failed on docs_vec: {e}") from e
         if emb_row is None:
-            return []
+            raise ValidationError(
+                f"document {doc_id!r} has no stored embedding; "
+                "the embedder has not indexed it yet"
+            )
         query_vec = emb_row[0]
 
         try:
@@ -65,8 +80,8 @@ class EmbeddingMixin:
                 """,
                 (query_vec, row[0], limit),
             )
-        except Exception:
-            return []
+        except Exception as e:  # noqa: BLE001 — surface the failure, don't hide it
+            raise ValidationError(f"similar-document vector query failed: {e}") from e
 
         cols = [desc[0] for desc in cursor.description]
         rows = cursor.fetchall()
@@ -103,25 +118,39 @@ class EmbeddingMixin:
     def find_duplicates(
         self, threshold: float = 0.15, limit: int = 50
     ) -> list[tuple[str, str, float]]:
-        """Scan all documents and find near-duplicate pairs."""
+        """Scan all documents and find near-duplicate pairs.
+
+        Raises:
+            ValidationError: duplicate detection is unavailable — the
+                embedder is disabled, the vec0 extension is missing, or no
+                active document has a stored embedding. An empty list is a
+                legitimate answer ("vectors exist, but no pair is within
+                ``threshold``"); these three unavailable causes must not be
+                mistaken for it.
+        """
+        emb = getattr(self, "_embedder", None)
+        if emb is None or not getattr(emb, "enabled", False):
+            raise ValidationError("duplicate detection requires an enabled embedder")
         vec_conn = self._vec_conn_lazy()
         if vec_conn is None:
-            return []
+            raise ValidationError("vec0 extension not available; duplicate detection disabled")
 
         doc_ids = self._conn.execute(
             "SELECT id, rowid FROM documents WHERE deleted_at IS NULL ORDER BY rowid"
         ).fetchall()
 
         results: list[tuple[str, str, float]] = []
+        embedded = 0
         for idx, (id_a, rowid_a) in enumerate(doc_ids):
             try:
                 emb_row = vec_conn.execute(
                     "SELECT embedding FROM docs_vec WHERE rowid = ?", (rowid_a,)
                 ).fetchone()
-            except Exception:
-                continue
+            except Exception as e:  # noqa: BLE001 — surface the failure, don't hide it
+                raise ValidationError(f"duplicate scan failed reading docs_vec: {e}") from e
             if emb_row is None:
                 continue
+            embedded += 1
             query_vec = emb_row[0]
             try:
                 cursor = vec_conn.execute(
@@ -138,13 +167,18 @@ class EmbeddingMixin:
                     """,
                     (query_vec, rowid_a, threshold, limit - len(results)),
                 )
-            except Exception:
-                continue
+            except Exception as e:  # noqa: BLE001 — surface the failure, don't hide it
+                raise ValidationError(f"duplicate scan MATCH query failed: {e}") from e
             for r in cursor.fetchall():
                 id_b, dist = r[0], float(r[1])
                 results.append((id_a, id_b, dist))
                 if len(results) >= limit:
                     return results
+        if not embedded:
+            raise ValidationError(
+                "no active document has a stored embedding; "
+                "the embedder has not indexed anything yet"
+            )
         return results
 
     # ---- embeddings (vec0) ----------------------------------------------
@@ -157,7 +191,7 @@ class EmbeddingMixin:
         try:
             text = f"{doc.title}\n\n{doc.body}".strip()
             vector = emb.embed(text)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logging.getLogger("kb_mcp_lite").warning("embedding failed for %s: %s", doc.id, e)
             return
         try:
@@ -179,7 +213,7 @@ class EmbeddingMixin:
                 "INSERT INTO docs_vec(rowid, embedding) VALUES (?, ?)",
                 (rowid[0], serialize_float32(vector)),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logging.getLogger("kb_mcp_lite").debug("docs_vec write skipped for %s: %s", doc.id, e)
 
     def _remove_embedding(self, doc_id: str) -> None:
@@ -191,7 +225,7 @@ class EmbeddingMixin:
                 "DELETE FROM docs_vec WHERE rowid = (SELECT rowid FROM documents WHERE id = ?)",
                 (doc_id,),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _vec_conn_lazy(self) -> Any:
@@ -205,7 +239,7 @@ class EmbeddingMixin:
             from kb_mcp_lite.store.connection import make_sqlite_connection
 
             conn = make_sqlite_connection(str(self.path))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logging.getLogger("kb_mcp_lite").debug("vec0 connection not available: %s", e)
             self._vec_conn = False
             return None
@@ -222,14 +256,14 @@ class EmbeddingMixin:
             # lexical-only search, as before.
             try:
                 conn.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._vec_conn = False
             return None
         self._vec_conn = conn
         try:
             conn.execute("PRAGMA foreign_keys=ON")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         self._vec_row_is_tuple = True
         return conn
@@ -263,7 +297,7 @@ class EmbeddingMixin:
                 n_fail += 1
                 failed_ids.append(doc.id)
             if progress_callback:
-                progress_callback(i + 1, total, doc.id, self._count_vec(doc.id) >= 1)
+                progress_callback(i + 1, total)
         self.last_reindex_report = {
             "succeeded": n_ok,
             "failed": n_fail,
@@ -285,7 +319,7 @@ class EmbeddingMixin:
                 (doc_id,),
             ).fetchone()
             return 1 if r is not None else 0
-        except Exception:
+        except Exception:  # noqa: BLE001
             return 0
 
 
@@ -329,7 +363,7 @@ def ensure_vec_table(conn: Any, dim: int) -> bool:
             f"embedding float[{dim}] distance_metric=cosine)"
         )
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001
         logging.getLogger("kb_mcp_lite.store.embedding").debug(
             "docs_vec table unavailable on %r: ", conn, exc_info=True
         )

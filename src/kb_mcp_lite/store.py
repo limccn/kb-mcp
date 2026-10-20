@@ -52,13 +52,13 @@ Callers MUST handle these. Callers MUST NOT catch the generic
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from datetime import timedelta
 from typing import Protocol, runtime_checkable
+from collections.abc import Iterable
 
 from kb_mcp_lite.schema import (
-    DoctorReport,
     Document,
+    DoctorReport,
     ImportReport,
     Link,
     SearchHit,
@@ -228,8 +228,13 @@ class Store(Protocol):
         cosine distance, sorted nearest-first.
 
         Each tuple is ``(document, cosine_distance)`` where 0.0 = identical.
-        Returns ``[]`` when the embedder is disabled or the doc has no
-        embedding vector.
+
+        Raises:
+            ValidationError: similarity is unavailable — the embedder is
+                disabled, the vec0 extension is missing, or the doc has no
+                stored embedding. An empty list is a legitimate answer
+                ("no other similar documents"); these causes must not be
+                mistaken for it.
         """
         ...
 
@@ -259,6 +264,12 @@ class Store(Protocol):
         ``threshold`` is the cosine-distance cutoff (0.0 = identical,
         lower = more similar). Returns ``[(id_a, id_b, distance), ...]``
         sorted by distance ascending, limited to ``limit`` pairs.
+
+        Raises:
+            ValidationError: duplicate detection is unavailable — the
+                embedder is disabled, the vec0 extension is missing, or no
+                active document has a stored embedding. ``[]`` means
+                "vectors exist, but no pair is within ``threshold``".
         """
         ...
 

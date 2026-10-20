@@ -1,17 +1,16 @@
 """Tests for the built-in scheduler (v0.8 特性 #7)."""
 
-from datetime import datetime, timezone
-
 import pytest
-
-from kb_mcp_lite.scheduler import (
-    TASK_REGISTRY,
-    JobRun,
-    TaskScheduler,
-    register_task,
-)
+from datetime import datetime, timezone
 from kb_mcp_lite.schema import Document
 from kb_mcp_lite.store.sqlite import SqliteStore
+from kb_mcp_lite.scheduler import (
+    TASK_REGISTRY,
+    TaskScheduler,
+    JobRun,
+    register_task,
+)
+
 
 # ---------------------------------------------------------------------------
 # Task registry

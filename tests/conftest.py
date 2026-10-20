@@ -29,9 +29,6 @@ class SyncEmbedStore(SqliteStore):
     those tests is a fast in-process mock, so the drain is instant.
     """
 
-    def __init__(self, *args, auto_start_worker: bool = False, **kwargs) -> None:
-        super().__init__(*args, auto_start_worker=auto_start_worker, **kwargs)
-
     def add(self, doc: Document) -> str:
         doc_id = super().add(doc)
         self.process_embedding_queue()

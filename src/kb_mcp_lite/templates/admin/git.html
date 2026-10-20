@@ -1,0 +1,559 @@
+{% extends "base.html" %}
+{% block title %}Git · kb-mcp admin{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1>Git</h1>
+    <p>管理当前知识库的 Git 状态、导出与提交文档变更、拉取与推送远程版本库。</p>
+  </div>
+  <div class="page-header-actions" style="display: flex; gap: 8px; flex-wrap: wrap;">
+    <button class="button secondary" onclick="refreshGitAll()" id="btn-refresh">
+      <span class="button-text">刷新状态</span>
+      <span class="button-spinner"></span>
+    </button>
+    <button class="button secondary" onclick="pullGit()" id="btn-pull">
+      <span class="button-text">⬇️ 拉取更新 (Pull)</span>
+      <span class="button-spinner"></span>
+    </button>
+    <button class="button secondary" onclick="pushGit()" id="btn-push">
+      <span class="button-text">⬆️ 推送到远程 (Push)</span>
+      <span class="button-spinner"></span>
+    </button>
+    <button class="button primary" onclick="syncGit()" id="btn-sync">
+      <span class="button-text">🔁 双向同步 (Sync)</span>
+      <span class="button-spinner"></span>
+    </button>
+  </div>
+</header>
+
+<!-- Not Git Initialized Alert Banner -->
+<div id="git-uninit-banner" class="alert warning" style="display: none; margin-bottom: 24px;">
+  <div style="flex: 1;">
+    <strong>当前 Vault 尚未初始化 Git 同步仓库</strong>
+    <p style="margin-top: 4px; font-size: 0.875rem;">初始化后可自动将 SQLite 中的文档导出为 Markdown 文件并进行版本追踪与团队协作。</p>
+  </div>
+  <button class="button primary" onclick="openInitModal()" style="margin-left: 16px;">
+    <span>立即初始化 Git</span>
+  </button>
+</div>
+
+<!-- Stats Grid -->
+<section class="stats-grid">
+  <article class="stat-panel">
+    <span>当前分支 (Branch)</span>
+    <strong id="stat-branch" style="font-family: var(--font-mono); font-size: 1.15rem;">加载中...</strong>
+  </article>
+  <article class="stat-panel">
+    <span>待导出数据库变更</span>
+    <strong id="stat-pending" style="color: var(--primary);">-</strong>
+  </article>
+  <article class="stat-panel">
+    <span>工作区文件变动</span>
+    <strong id="stat-working-tree">-</strong>
+  </article>
+  <article class="stat-panel">
+    <span>同步仓库路径</span>
+    <div id="stat-git-dir" style="font-size: 0.8rem; font-family: var(--font-mono); word-break: break-all; margin-top: 4px; color: var(--muted-foreground);">-</div>
+  </article>
+</section>
+
+<div class="split-grid" style="margin-top: 24px; align-items: start;">
+  <!-- Left Side: Changes & Actions -->
+  <div class="panel-list">
+    <!-- Pending DB Export Section -->
+    <section class="panel">
+      <div class="panel-head" style="display: flex; justify-content: space-between; align-items: center;">
+        <h2>数据库待导出变更</h2>
+        <span class="badge" id="pending-badge">0 个文档</span>
+      </div>
+      <div style="padding: 16px 20px;">
+        <div id="pending-export-container">
+          <div class="empty-state" style="padding: 24px 0;">
+            <div class="empty-state-title">数据库与 Markdown 目录已同步</div>
+            <p style="font-size: 0.875rem; color: var(--muted-foreground);">所有知识库文档均已导出至本地文件系统。</p>
+          </div>
+        </div>
+
+        <!-- Quick Commit Form -->
+        <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border);">
+          <h3 style="font-size: 0.95rem; margin-bottom: 12px; font-weight: 600;">导出并提交到 Git (Commit)</h3>
+          <form id="commit-form" onsubmit="submitCommit(event)">
+            <div class="form-group" style="margin-bottom: 12px;">
+              <label for="commit-msg" style="font-size: 0.85rem; margin-bottom: 4px; display: block;">提交说明 (Commit Message)</label>
+              <input type="text" id="commit-msg" class="form-input" placeholder="例如: 更新接口规范与架构决策" style="width: 100%;" required>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+              <label class="checkbox-field" style="font-size: 0.85rem; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                <input type="checkbox" id="commit-full">
+                <span>强制全量导出 (忽略文件修改时间 --full)</span>
+              </label>
+              <button type="submit" class="button primary" id="btn-commit-submit">
+                <span class="button-text">💾 导出并提交</span>
+                <span class="button-spinner"></span>
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- Remote Sync Controls Panel -->
+    <section class="panel">
+      <div class="panel-head"><h2>远程仓库同步配置</h2></div>
+      <div style="padding: 16px 20px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+          <div>
+            <label for="sync-remote" style="font-size: 0.85rem; margin-bottom: 4px; display: block;">远程名称 (Remote)</label>
+            <input type="text" id="sync-remote" class="form-input" value="origin" style="width: 100%;">
+          </div>
+          <div>
+            <label for="sync-branch" style="font-size: 0.85rem; margin-bottom: 4px; display: block;">分支名称 (Branch)</label>
+            <input type="text" id="sync-branch" class="form-input" value="main" style="width: 100%;">
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button class="button secondary" onclick="pullGit()" style="flex: 1;">
+            <span>⬇️ 拉取并导入 (Pull)</span>
+          </button>
+          <button class="button secondary" onclick="pushGit()" style="flex: 1;">
+            <span>⬆️ 推送到远程 (Push)</span>
+          </button>
+          <button class="button primary" onclick="syncGit()" style="flex: 1;">
+            <span>🔁 一键双向同步 (Sync)</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Raw Git Status Accordion/Panel -->
+    <section class="panel">
+      <div class="panel-head" style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="toggleRawStatus()">
+        <h2>Git 终端原生输出</h2>
+        <span id="raw-status-arrow" style="font-size: 0.85rem; color: var(--muted-foreground);">展开 ▼</span>
+      </div>
+      <div id="raw-status-body" style="display: none; padding: 16px 20px;">
+        <pre id="raw-git-output" style="background: var(--background); padding: 12px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 0.8rem; overflow-x: auto; white-space: pre-wrap; margin: 0; color: var(--foreground); border: 1px solid var(--border);">加载中...</pre>
+      </div>
+    </section>
+  </div>
+
+  <!-- Right Side: Commit History -->
+  <div class="panel-list">
+    <section class="panel">
+      <div class="panel-head" style="display: flex; justify-content: space-between; align-items: center;">
+        <h2>提交历史 (Commit History)</h2>
+        <button class="button ghost" style="padding: 4px 8px; font-size: 0.8rem;" onclick="loadGitHistory()">刷新历史</button>
+      </div>
+      <div style="padding: 0 16px 16px 16px;">
+        <div id="history-container" style="max-height: 640px; overflow-y: auto;">
+          <div class="empty-state" style="padding: 32px 0;">
+            <div class="empty-state-title">正在加载 Git 提交历史...</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- Init Git Modal -->
+<div id="init-modal" class="modal" style="display: none;">
+  <div class="modal-overlay" onclick="closeInitModal()"></div>
+  <div class="modal-content" style="max-width: 500px;">
+    <div class="modal-header">
+      <h2>初始化 Git 仓库</h2>
+      <button class="modal-close" onclick="closeInitModal()">&times;</button>
+    </div>
+    <form onsubmit="submitInitGit(event)">
+      <div style="padding: 16px 20px;">
+        <p style="font-size: 0.9rem; margin-bottom: 16px; color: var(--muted-foreground);">
+          为当前知识库初始化 Git 版本管理。Markdown 文件将导出并在指定目录中进行 Git 追踪。
+        </p>
+        <div class="form-group" style="margin-bottom: 16px;">
+          <label for="init-sync-dir" style="font-size: 0.85rem; margin-bottom: 4px; display: block;">同步目录路径 (可选，留空则在当前 Vault 内部初始化)</label>
+          <input type="text" id="init-sync-dir" class="form-input" placeholder="例如: /Users/username/code/my-knowledge-base" style="width: 100%;">
+          <small style="font-size: 0.75rem; color: var(--muted-foreground); margin-top: 4px; display: block;">
+            可指向已有 Git 仓库的工作区根目录。
+          </small>
+        </div>
+        <div class="form-actions" style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px;">
+          <button type="button" class="button secondary" onclick="closeInitModal()">取消</button>
+          <button type="submit" class="button primary" id="btn-init-submit">
+            <span class="button-text">确认初始化</span>
+            <span class="button-spinner"></span>
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Toast Notification Container -->
+<div id="toast-container" style="position: fixed; bottom: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 8px;"></div>
+
+<script>
+  function showToast(message, type = 'success') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = `alert ${type}`;
+    toast.style.boxShadow = 'var(--shadow-lg)';
+    toast.style.minWidth = '280px';
+    toast.style.maxWidth = '420px';
+    toast.style.animation = 'fadeIn 0.2s ease-out';
+    toast.innerHTML = `<div>${message}</div>`;
+    container.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transition = 'opacity 0.3s ease';
+      setTimeout(() => toast.remove(), 300);
+    }, 4000);
+  }
+
+  function setButtonLoading(btnId, loading) {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.disabled = loading;
+    if (loading) {
+      btn.classList.add('loading');
+    } else {
+      btn.classList.remove('loading');
+    }
+  }
+
+  async function loadGitStatus() {
+    try {
+      const res = await fetch('/api/git/status');
+      const data = await res.json();
+      if (!data.ok) {
+        showToast('获取 Git 状态失败: ' + (data.error || '未知错误'), 'error');
+        return;
+      }
+
+      // Check if git is initialized
+      const banner = document.getElementById('git-uninit-banner');
+      if (!data.is_git) {
+        banner.style.display = 'flex';
+        document.getElementById('stat-branch').textContent = '未初始化';
+        document.getElementById('stat-branch').style.color = 'var(--destructive)';
+      } else {
+        banner.style.display = 'none';
+        document.getElementById('stat-branch').textContent = data.branch || 'main';
+        document.getElementById('stat-branch').style.color = 'var(--primary)';
+        document.getElementById('sync-branch').value = data.branch || 'main';
+      }
+
+      document.getElementById('stat-git-dir').textContent = data.git_dir || '-';
+
+      // Pending DB export
+      const pending = data.pending_export || { total: 0, added: [], modified: [], deleted: [] };
+      document.getElementById('stat-pending').textContent = `${pending.total} 项待导出`;
+      document.getElementById('pending-badge').textContent = `${pending.total} 个文档`;
+
+      renderPendingList(pending);
+
+      // Working tree summary
+      const stagedCount = (data.staged || []).length;
+      const unstagedCount = (data.unstaged || []).length;
+      const untrackedCount = (data.untracked || []).length;
+      const totalChanges = stagedCount + unstagedCount + untrackedCount;
+
+      const statWorking = document.getElementById('stat-working-tree');
+      if (totalChanges === 0) {
+        statWorking.textContent = '干净 (Clean)';
+        statWorking.style.color = 'var(--success)';
+      } else {
+        statWorking.textContent = `${totalChanges} 个文件变动`;
+        statWorking.style.color = 'var(--warning)';
+      }
+
+      // Raw output
+      document.getElementById('raw-git-output').textContent = data.status_raw || '无状态输出';
+    } catch (e) {
+      console.error(e);
+      showToast('加载 Git 状态异常', 'error');
+    }
+  }
+
+  function renderPendingList(pending) {
+    const container = document.getElementById('pending-export-container');
+    if (!pending || pending.total === 0) {
+      container.innerHTML = `
+        <div class="empty-state" style="padding: 24px 0;">
+          <div class="empty-state-title">数据库与 Markdown 目录已同步</div>
+          <p style="font-size: 0.875rem; color: var(--muted-foreground);">所有知识库文档均已导出至本地文件系统。</p>
+        </div>
+      `;
+      return;
+    }
+
+    let html = '<div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">';
+    
+    if (pending.added && pending.added.length > 0) {
+      html += `
+        <div>
+          <div style="font-size: 0.8rem; font-weight: 600; color: var(--success); margin-bottom: 4px;">新增文档 (+${pending.added.length}):</div>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+            ${pending.added.map(id => `<span class="badge success" style="font-family: var(--font-mono); font-size: 0.75rem;">+ ${id}</span>`).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    if (pending.modified && pending.modified.length > 0) {
+      html += `
+        <div style="margin-top: 6px;">
+          <div style="font-size: 0.8rem; font-weight: 600; color: var(--warning); margin-bottom: 4px;">已修改文档 (~${pending.modified.length}):</div>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+            ${pending.modified.map(id => `<span class="badge warning" style="font-family: var(--font-mono); font-size: 0.75rem;">~ ${id}</span>`).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    if (pending.deleted && pending.deleted.length > 0) {
+      html += `
+        <div style="margin-top: 6px;">
+          <div style="font-size: 0.8rem; font-weight: 600; color: var(--destructive); margin-bottom: 4px;">已删除文档 (-${pending.deleted.length}):</div>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+            ${pending.deleted.map(id => `<span class="badge destructive" style="font-family: var(--font-mono); font-size: 0.75rem;">- ${id}</span>`).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+  }
+
+  async function loadGitHistory() {
+    const container = document.getElementById('history-container');
+    try {
+      const res = await fetch('/api/git/history?limit=30');
+      const data = await res.json();
+      if (!data.ok || !data.commits || data.commits.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state" style="padding: 32px 0;">
+            <div class="empty-state-title">暂无 Git 提交记录</div>
+            <p style="font-size: 0.875rem; color: var(--muted-foreground);">执行首次导出并提交后即可在此查看提交日志。</p>
+          </div>
+        `;
+        return;
+      }
+
+      let html = '<div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">';
+      data.commits.forEach(c => {
+        html += `
+          <div style="padding: 12px 14px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span class="badge secondary" style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 600; cursor: pointer;" title="完整 Hash: ${c.hash}">
+                ${c.short_hash}
+              </span>
+              <span style="font-size: 0.75rem; color: var(--muted-foreground);" title="${c.date}">
+                ${c.relative_date || c.date}
+              </span>
+            </div>
+            <div style="font-weight: 600; font-size: 0.9rem; margin-bottom: 6px; word-break: break-word;">
+              ${escapeHtml(c.message)}
+            </div>
+            <div style="font-size: 0.8rem; color: var(--muted-foreground); display: flex; align-items: center; gap: 4px;">
+              <span>👤 ${escapeHtml(c.author)}</span>
+              ${c.email ? `<span style="font-size: 0.75rem; opacity: 0.7;">&lt;${escapeHtml(c.email)}&gt;</span>` : ''}
+            </div>
+          </div>
+        `;
+      });
+      html += '</div>';
+      container.innerHTML = html;
+    } catch (e) {
+      console.error(e);
+      container.innerHTML = `<div class="empty-state" style="padding: 24px 0;"><div class="empty-state-title">加载提交历史失败</div></div>`;
+    }
+  }
+
+  function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  async function submitCommit(event) {
+    event.preventDefault();
+    const msg = document.getElementById('commit-msg').value.trim();
+    if (!msg) {
+      showToast('请输入提交说明', 'error');
+      return;
+    }
+    const full = document.getElementById('commit-full').checked;
+    setButtonLoading('btn-commit-submit', true);
+
+    try {
+      const res = await fetch('/api/git/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg, full: full })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showToast('提交成功: ' + (data.output || 'OK'), 'success');
+        document.getElementById('commit-msg').value = '';
+        await refreshGitAll();
+      } else {
+        showToast('提交失败: ' + (data.error || '未知错误'), 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('执行提交异常', 'error');
+    } finally {
+      setButtonLoading('btn-commit-submit', false);
+    }
+  }
+
+  async function pullGit() {
+    const remote = document.getElementById('sync-remote').value.trim() || 'origin';
+    const branch = document.getElementById('sync-branch').value.trim() || 'main';
+    setButtonLoading('btn-pull', true);
+
+    try {
+      const res = await fetch('/api/git/pull', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ remote, branch })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showToast('拉取成功: ' + (data.output || 'OK'), 'success');
+        await refreshGitAll();
+      } else {
+        showToast('拉取失败: ' + (data.error || '未知错误'), 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('执行拉取异常', 'error');
+    } finally {
+      setButtonLoading('btn-pull', false);
+    }
+  }
+
+  async function pushGit() {
+    const remote = document.getElementById('sync-remote').value.trim() || 'origin';
+    const branch = document.getElementById('sync-branch').value.trim() || 'main';
+    setButtonLoading('btn-push', true);
+
+    try {
+      const res = await fetch('/api/git/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ remote, branch })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showToast('推送成功: ' + (data.output || 'OK'), 'success');
+        await refreshGitAll();
+      } else {
+        showToast('推送失败: ' + (data.error || '未知错误'), 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('执行推送异常', 'error');
+    } finally {
+      setButtonLoading('btn-push', false);
+    }
+  }
+
+  async function syncGit() {
+    const remote = document.getElementById('sync-remote').value.trim() || 'origin';
+    const branch = document.getElementById('sync-branch').value.trim() || 'main';
+    setButtonLoading('btn-sync', true);
+
+    try {
+      const res = await fetch('/api/git/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'sync: admin web console', remote, branch })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showToast('双向同步完成:\n' + (data.output || 'OK'), 'success');
+        await refreshGitAll();
+      } else {
+        showToast('双向同步失败: ' + (data.error || '未知错误'), 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('执行同步异常', 'error');
+    } finally {
+      setButtonLoading('btn-sync', false);
+    }
+  }
+
+  function openInitModal() {
+    document.getElementById('init-modal').style.display = 'flex';
+  }
+
+  function closeInitModal() {
+    document.getElementById('init-modal').style.display = 'none';
+  }
+
+  async function submitInitGit(event) {
+    event.preventDefault();
+    const syncDir = document.getElementById('init-sync-dir').value.trim() || null;
+    setButtonLoading('btn-init-submit', true);
+
+    try {
+      const res = await fetch('/api/git/init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sync_dir: syncDir })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showToast('Git 初始化成功', 'success');
+        closeInitModal();
+        await refreshGitAll();
+      } else {
+        showToast('Git 初始化失败: ' + (data.error || '未知错误'), 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('初始化异常', 'error');
+    } finally {
+      setButtonLoading('btn-init-submit', false);
+    }
+  }
+
+  function toggleRawStatus() {
+    const body = document.getElementById('raw-status-body');
+    const arrow = document.getElementById('raw-status-arrow');
+    if (body.style.display === 'none') {
+      body.style.display = 'block';
+      arrow.textContent = '收起 ▲';
+    } else {
+      body.style.display = 'none';
+      arrow.textContent = '展开 ▼';
+    }
+  }
+
+  async function refreshGitAll() {
+    setButtonLoading('btn-refresh', true);
+    await Promise.all([loadGitStatus(), loadGitHistory()]);
+    setButtonLoading('btn-refresh', false);
+  }
+
+  // Expose methods for HTML event attributes and SPA calls
+  window.refreshGitAll = refreshGitAll;
+  window.submitCommit = submitCommit;
+  window.pullGit = pullGit;
+  window.pushGit = pushGit;
+  window.syncGit = syncGit;
+  window.openInitModal = openInitModal;
+  window.closeInitModal = closeInitModal;
+  window.submitInitGit = submitInitGit;
+  window.toggleRawStatus = toggleRawStatus;
+  window.loadGitHistory = loadGitHistory;
+
+  // Initial load - handles both full page load and SPA navigation
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', refreshGitAll);
+  } else {
+    refreshGitAll();
+  }
+</script>
+{% endblock %}

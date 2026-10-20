@@ -2,31 +2,31 @@
 
 from __future__ import annotations
 
-import builtins
 import json
 import logging
 import os
 import re
 import sqlite3
-from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
+from collections.abc import Iterable, Iterator
 
 from kb_mcp_lite.schema import (
     Document,
-    DuplicateError,
-    ImportReport,
     Link,
+    ImportReport,
     NotFoundError,
+    DuplicateError,
     ValidationError,
 )
 from kb_mcp_lite.store.connection import make_sqlite_connection, sqlite_row_factory
-from kb_mcp_lite.store.embedding import EmbeddingMixin
 from kb_mcp_lite.store.maintenance import MaintenanceMixin
 from kb_mcp_lite.store.search import SearchMixin
 from kb_mcp_lite.store.versioning import VersioningMixin
+from kb_mcp_lite.store.embedding import EmbeddingMixin
+import builtins
 
 if TYPE_CHECKING:
     from kb_mcp_lite.concurrency import WriteLock
@@ -141,6 +141,7 @@ class SqliteStore(MaintenanceMixin, SearchMixin, VersioningMixin, EmbeddingMixin
     def init(self) -> None:
         """Initialize a new empty knowledge base."""
         # Already handled by migrations
+        pass
 
     # ---- embedding queue / worker ---------------------------------------
 
@@ -243,7 +244,7 @@ class SqliteStore(MaintenanceMixin, SearchMixin, VersioningMixin, EmbeddingMixin
                             break
                         continue
                     break
-                scratch._process_one(entry)
+                scratch._process_one(entry)  # noqa: SLF001
                 processed += 1
         finally:
             # Only stop the worker if we constructed it ourselves. The
@@ -282,7 +283,7 @@ class SqliteStore(MaintenanceMixin, SearchMixin, VersioningMixin, EmbeddingMixin
             try:
                 row = self._conn.execute("SELECT COUNT(*) FROM docs_vec").fetchone()
                 n_vec = int(row[0]) if row else 0
-            except Exception:
+            except Exception:  # noqa: BLE001
                 n_vec = 0
         queue = self._embedding_queue.status()
         return {
@@ -322,7 +323,7 @@ class SqliteStore(MaintenanceMixin, SearchMixin, VersioningMixin, EmbeddingMixin
         if worker is not None:
             try:
                 worker.stop()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.debug("error stopping embedding worker", exc_info=True)
             self._embedding_worker = None
         try:
@@ -925,91 +926,8 @@ class SqliteStore(MaintenanceMixin, SearchMixin, VersioningMixin, EmbeddingMixin
         rows = self._conn.execute(sql).fetchall()
         return [self._row_to_doc(r) for r in rows]
 
-    # ── Custom Types (Vault-scoped) ──────────────────────────────────
-
-    def list_custom_types(self) -> builtins.list[dict[str, Any]]:
-        """List all custom types defined in this vault."""
-        try:
-            rows = self._conn.execute(
-                "SELECT name, label, description, color, created_at, updated_at FROM custom_types ORDER BY rowid ASC"
-            ).fetchall()
-            return [
-                {
-                    "name": str(r["name"]),
-                    "label": str(r["label"]),
-                    "description": str(r["description"] or ""),
-                    "color": str(r["color"] or "#64748b"),
-                    "created_at": r["created_at"],
-                    "updated_at": r["updated_at"],
-                    "is_builtin": False,
-                }
-                for r in rows
-            ]
-        except Exception:
-            return []
-
-    def get_custom_type(self, name: str) -> dict[str, Any] | None:
-        """Get a custom type definition by name."""
-        try:
-            row = self._conn.execute(
-                "SELECT name, label, description, color, created_at, updated_at FROM custom_types WHERE name = ?",
-                (name,),
-            ).fetchone()
-            if not row:
-                return None
-            return {
-                "name": str(row["name"]),
-                "label": str(row["label"]),
-                "description": str(row["description"] or ""),
-                "color": str(row["color"] or "#64748b"),
-                "created_at": row["created_at"],
-                "updated_at": row["updated_at"],
-                "is_builtin": False,
-            }
-        except Exception:
-            return None
-
-    def save_custom_type(
-        self,
-        name: str,
-        label: str,
-        description: str = "",
-        color: str = "#64748b",
-    ) -> dict[str, Any]:
-        """Create or update a custom type definition in this vault."""
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%fZ")
-        self._conn.execute(
-            """
-            INSERT INTO custom_types (name, label, description, color, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(name) DO UPDATE SET
-                label = excluded.label,
-                description = excluded.description,
-                color = excluded.color,
-                updated_at = excluded.updated_at
-            """,
-            (name, label, description, color, now, now),
-        )
-        self._conn.commit()
-        return {
-            "name": name,
-            "label": label,
-            "description": description,
-            "color": color,
-            "is_builtin": False,
-        }
-
-    def delete_custom_type(self, name: str) -> bool:
-        """Delete a custom type definition from this vault."""
-        cursor = self._conn.execute(
-            "DELETE FROM custom_types WHERE name = ?",
-            (name,),
-        )
-        self._conn.commit()
-        return cursor.rowcount > 0
-
 
 # Import make_id at the end to avoid circular import
-from kb_mcp_lite.schema import make_id
+from kb_mcp_lite.schema import make_id  # noqa: E402
 
 __all__ = ["SqliteStore"]

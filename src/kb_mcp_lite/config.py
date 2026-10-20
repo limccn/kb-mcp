@@ -22,6 +22,7 @@ Structure:
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -48,7 +49,7 @@ def load_config() -> dict[str, Any]:
         raw = path.read_text(encoding="utf-8")
         data = yaml.safe_load(raw)
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception:  # noqa: BLE001
         return {}
 
 
@@ -58,7 +59,13 @@ def get_data_dir() -> Path:
     Priority:
     1. ``KB_MCP_HOME`` env var
     2. Config file ``data_dir`` value
-    3. ``~/.local/share/kb-mcp/`` (XDG default)
+    3. Frozen builds (PyInstaller): ``<exe dir>/data`` — a shipped exe
+       keeps its data next to itself
+    4. ``~/.local/share/kb-mcp/`` (XDG default)
+
+    Only step 3 is new for the frozen builds; every other install resolves
+    exactly as before. The directory itself is created on first vault
+    access (``VaultManager._ensure_registry``).
     """
     env = os.environ.get("KB_MCP_HOME")
     if env:
@@ -67,6 +74,8 @@ def get_data_dir() -> Path:
     raw = cfg.get("data_dir")
     if raw:
         return Path(raw).expanduser()
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "data"
     return Path.home() / ".local" / "share" / "kb-mcp"
 
 
@@ -204,17 +213,17 @@ def ensure_config() -> Path:
 
 
 __all__ = [
-    "TEMPLATE",
     "config_path",
-    "ensure_config",
-    "get_data_dir",
-    "get_embedding_api_key",
-    "get_embedding_block",
-    "get_embedding_model",
-    "get_embedding_url",
-    "get_rerank_api_key",
-    "get_rerank_block",
-    "get_rerank_model",
-    "get_rerank_url",
     "load_config",
+    "get_data_dir",
+    "get_embedding_block",
+    "get_embedding_url",
+    "get_embedding_model",
+    "get_embedding_api_key",
+    "get_rerank_block",
+    "get_rerank_url",
+    "get_rerank_model",
+    "get_rerank_api_key",
+    "ensure_config",
+    "TEMPLATE",
 ]

@@ -84,7 +84,7 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
                 "INSERT INTO schema_version (version, name) VALUES (?, ?)",
                 (version, f"v{version:04d}"),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             # Migration 0003 (vec0) is best-effort: if vec0 is not
             # available on this connection, log and skip so lexical
             # features still work. Any other failure is fatal.

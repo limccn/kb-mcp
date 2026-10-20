@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}导入 · kb-mcp admin{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1>导入与导出</h1>
+    <p>使用 zip 打包的 Markdown 知识库进行管理操作。</p>
+  </div>
+</header>
+
+{% if errors %}
+<section class="alert error">
+  {% for error in errors %}
+  <div>{{ error }}</div>
+  {% endfor %}
+</section>
+{% endif %}
+
+<div class="split-grid">
+  <section class="panel">
+    <div class="panel-head"><h2>导入知识库</h2></div>
+    <form method="post" action="/imports" enctype="multipart/form-data" class="form-stack">
+      <label>
+        <span>Zip 文件</span>
+        <input type="file" name="archive" accept=".zip" required />
+      </label>
+      <label class="checkbox-field">
+        <input type="checkbox" name="dry_run" value="true" />
+        <span>仅模拟运行</span>
+      </label>
+      <button class="button primary" type="submit">导入</button>
+    </form>
+
+    {% if import_report %}
+    <div class="report-grid">
+      <div><span>新增</span><strong>{{ import_report.inserted }}</strong></div>
+      <div><span>更新</span><strong>{{ import_report.updated }}</strong></div>
+      <div><span>跳过</span><strong>{{ import_report.skipped }}</strong></div>
+    </div>
+    {% if import_report.errors %}
+    <div class="subpanel">
+      <h3>导入错误</h3>
+      <ul class="error-list">
+        {% for error in import_report.errors %}
+        <li>{{ error }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>导出知识库</h2></div>
+    <form method="post" action="/exports" class="form-stack">
+    <p class="helper">将所有有效文档导出到临时 Markdown 目录。</p>
+      <button class="button secondary" type="submit">执行导出</button>
+    </form>
+
+    {% if export_report %}
+    <div class="report-grid">
+      <div><span>已写入</span><strong>{{ export_report.written }}</strong></div>
+      <div class="span-2"><span>路径</span><strong>{{ export_report.path }}</strong></div>
+    </div>
+    <div class="subpanel">
+      <h3>示例文件</h3>
+      <ul class="file-list">
+        {% for file in export_report.files %}
+        <li>{{ file }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% else %}
+    <div class="empty-state" style="margin-top:12px;">
+      <div class="empty-state-title">暂无导出</div>
+      <p>执行导出以生成 Markdown 文件。</p>
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

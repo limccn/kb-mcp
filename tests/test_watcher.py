@@ -1,10 +1,8 @@
 import time
 from pathlib import Path
-
 import pytest
-
-from kb_mcp_lite.store.sqlite import SqliteStore
 from kb_mcp_lite.vault import VaultManager
+from kb_mcp_lite.store.sqlite import SqliteStore
 from kb_mcp_lite.watcher import VaultWatcher
 
 

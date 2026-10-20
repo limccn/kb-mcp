@@ -1,0 +1,518 @@
+{% extends "base.html" %}
+{% block title %}类型管理 · kb-mcp admin{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1>文档类型管理</h1>
+    <p>查看系统内置的知识模型与按需扩展的自定义类型。</p>
+  </div>
+  <button class="button primary" onclick="openCreateModal()">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    添加类型
+  </button>
+</header>
+
+<section class="stats-grid">
+  <article class="stat-panel">
+    <span>总类型数</span>
+    <strong id="stat-total">{{ stats.total }}</strong>
+  </article>
+  <article class="stat-panel">
+    <span>内置类型</span>
+    <strong id="stat-builtin">{{ stats.builtin }}</strong>
+  </article>
+  <article class="stat-panel">
+    <span>自定义类型</span>
+    <strong id="stat-custom">{{ stats.custom }}</strong>
+  </article>
+  <article class="stat-panel">
+    <span>已分类文档</span>
+    <strong id="stat-docs">{{ stats.total_docs }}</strong>
+  </article>
+</section>
+
+<div class="panel-list">
+  <section class="panel">
+    <div class="panel-head">
+      <h2>类型列表</h2>
+      <span class="meta-chip" id="types-count-chip">{{ types|length }} 个类型</span>
+    </div>
+    <div class="table-shell">
+      <table>
+        <thead>
+          <tr>
+            <th>类型标识符</th>
+            <th>显示名称</th>
+            <th>说明描述</th>
+            <th>图谱配色</th>
+            <th>属性</th>
+            <th>文档数</th>
+            <th style="text-align: right;">操作</th>
+          </tr>
+        </thead>
+        <tbody id="types-table-body">
+          {% for t in types %}
+          <tr data-type-name="{{ t.name }}"
+              data-type-label="{{ t.label or t.name }}"
+              data-type-desc="{{ t.description or '' }}"
+              data-type-color="{{ t.color or '#64748b' }}"
+              data-type-builtin="{{ 'true' if t.is_builtin else 'false' }}"
+              data-type-docs="{{ t.doc_count or 0 }}">
+            <td>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="type-color-dot" style="background-color: {{ t.color or '#64748b' }};"></span>
+                <code class="type-code">{{ t.name }}</code>
+              </div>
+            </td>
+            <td>
+              <strong>{{ t.label or t.name }}</strong>
+            </td>
+            <td>
+              <span class="row-meta" style="max-width: 320px; display: inline-block;">{{ t.description or "-" }}</span>
+            </td>
+            <td>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span class="type-color-badge" style="background-color: {{ t.color or '#64748b' }};"></span>
+                <span style="font-family: var(--font-mono); font-size: 12px; color: var(--muted-foreground);">{{ t.color or "#64748b" }}</span>
+              </div>
+            </td>
+            <td>
+              <span class="status-pill {{ 'status-ok' if t.is_builtin else 'status-custom' }}">
+                {{ "内置" if t.is_builtin else "自定义" }}
+              </span>
+            </td>
+            <td>
+              {% if t.doc_count > 0 %}
+              <a href="/documents?type={{ t.name }}" class="doc-count-link" title="查看所有此类文档">
+                {{ t.doc_count }} 篇 ↗
+              </a>
+              {% else %}
+              <span style="color: var(--muted-foreground);">0 篇</span>
+              {% endif %}
+            </td>
+            <td style="text-align: right;">
+              <div style="display: flex; gap: 6px; justify-content: flex-end; align-items: center;">
+                <button class="button ghost small-button" onclick="editTypeRow(this)" title="编辑类型">
+                  编辑
+                </button>
+                {% if not t.is_builtin %}
+                  {% if t.doc_count > 0 %}
+                  <button class="button danger small-button" disabled title="已有 {{ t.doc_count }} 篇文档正在使用此类型，不可删除" style="opacity: 0.45; cursor: not-allowed;">
+                    删除
+                  </button>
+                  {% else %}
+                  <button class="button danger small-button" onclick="deleteTypeRow(this)" title="删除自定义类型">
+                    删除
+                  </button>
+                  {% endif %}
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<!-- Type Add/Edit Modal -->
+<div id="type-modal" class="modal" style="display: none;">
+  <div class="modal-overlay" onclick="closeTypeModal()"></div>
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2 id="modal-title">添加文档类型</h2>
+      <button class="modal-close" onclick="closeTypeModal()">&times;</button>
+    </div>
+    <form id="type-form" onsubmit="saveType(event)">
+      <div class="form-group">
+        <label for="type-name-input">类型标识符 (英文 slug)</label>
+        <input type="text" id="type-name-input" class="form-input" placeholder="如 requirement, architecture, spec" required pattern="^[a-zA-Z0-9_\-]+$" title="只能包含英文字母、数字、短横线和下划线">
+        <small id="type-name-help">用于数据库索引与 Markdown Frontmatter 标识（如 <code>type: requirement</code>）。创建后不可修改。</small>
+      </div>
+
+      <div class="form-group">
+        <label for="type-label-input">显示名称 (中文标签)</label>
+        <input type="text" id="type-label-input" class="form-input" placeholder="如 需求规格说明" required>
+        <small>用于管理后台、下拉菜单和图谱中的友好中文显示。</small>
+      </div>
+
+      <div class="form-group">
+        <label for="type-desc-input">说明描述</label>
+        <textarea id="type-desc-input" class="form-input" rows="2" placeholder="简要说明此类文档的记录内容与规范…"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label>主题与图谱配色</label>
+        <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 8px;">
+          <input type="color" id="type-color-picker" value="#3b82f6" style="width: 44px; height: 36px; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; padding: 2px;">
+          <input type="text" id="type-color-hex" class="form-input" value="#3b82f6" style="width: 120px;" placeholder="#3b82f6" pattern="^#[0-9a-fA-F]{6}$">
+        </div>
+        <div class="color-swatches">
+          <button type="button" class="color-swatch" style="background: #3b82f6;" onclick="selectColor('#3b82f6')"></button>
+          <button type="button" class="color-swatch" style="background: #8b5cf6;" onclick="selectColor('#8b5cf6')"></button>
+          <button type="button" class="color-swatch" style="background: #10b981;" onclick="selectColor('#10b981')"></button>
+          <button type="button" class="color-swatch" style="background: #f59e0b;" onclick="selectColor('#f59e0b')"></button>
+          <button type="button" class="color-swatch" style="background: #ec4899;" onclick="selectColor('#ec4899')"></button>
+          <button type="button" class="color-swatch" style="background: #06b6d4;" onclick="selectColor('#06b6d4')"></button>
+          <button type="button" class="color-swatch" style="background: #6366f1;" onclick="selectColor('#6366f1')"></button>
+          <button type="button" class="color-swatch" style="background: #f43f5e;" onclick="selectColor('#f43f5e')"></button>
+          <button type="button" class="color-swatch" style="background: #14b8a6;" onclick="selectColor('#14b8a6')"></button>
+          <button type="button" class="color-swatch" style="background: #64748b;" onclick="selectColor('#64748b')"></button>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button type="button" class="button secondary" onclick="closeTypeModal()">取消</button>
+        <button type="submit" class="button primary" id="type-submit-btn">
+          <span class="button-text">保存</span>
+          <span class="button-spinner"></span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function initTypesPage() {
+  let isEditing = false;
+  let editingTypeName = "";
+
+  function openCreateModal() {
+    isEditing = false;
+    editingTypeName = "";
+    document.getElementById("modal-title").textContent = "添加文档类型";
+    const nameInput = document.getElementById("type-name-input");
+    nameInput.value = "";
+    nameInput.disabled = false;
+    nameInput.readOnly = false;
+    nameInput.style.backgroundColor = "";
+    nameInput.style.cursor = "";
+    document.getElementById("type-name-help").innerHTML = "用于数据库索引与 Markdown Frontmatter 标识（如 <code>type: requirement</code>）。创建后不可修改。";
+
+    document.getElementById("type-label-input").value = "";
+    document.getElementById("type-desc-input").value = "";
+    selectColor("#3b82f6");
+    document.getElementById("type-modal").style.display = "flex";
+    setTimeout(() => nameInput.focus(), 50);
+  }
+
+  function editTypeRow(btn) {
+    const tr = btn.closest("tr");
+    if (!tr) return;
+    const name = tr.dataset.typeName || "";
+    const label = tr.dataset.typeLabel || name;
+    const desc = tr.dataset.typeDesc || "";
+    const color = tr.dataset.typeColor || "#64748b";
+    const isBuiltin = tr.dataset.typeBuiltin === "true";
+
+    isEditing = true;
+    editingTypeName = name;
+    document.getElementById("modal-title").textContent = `编辑类型 · ${name}`;
+    const nameInput = document.getElementById("type-name-input");
+    nameInput.value = name;
+    nameInput.disabled = false;
+    nameInput.readOnly = true;
+    nameInput.style.backgroundColor = "var(--muted)";
+    nameInput.style.cursor = "not-allowed";
+    document.getElementById("type-name-help").innerHTML = "<span style='color: var(--warning, #f59e0b);'>⚠️ 类型标识符已锁定，不可编辑。</span>";
+
+    document.getElementById("type-label-input").value = label || name;
+    document.getElementById("type-desc-input").value = desc || "";
+    selectColor(color || "#64748b");
+    document.getElementById("type-modal").style.display = "flex";
+    setTimeout(() => document.getElementById("type-label-input").focus(), 50);
+  }
+
+  function deleteTypeRow(btn) {
+    const tr = btn.closest("tr");
+    if (!tr) return;
+    const name = tr.dataset.typeName || "";
+    const docCount = parseInt(tr.dataset.typeDocs || "0", 10);
+    if (docCount > 0) {
+      showToast("error", "无法删除", `已有 ${docCount} 篇有效文档正在使用此类型，请先修改文档类型`);
+      return;
+    }
+    deleteType(name);
+  }
+
+  function closeTypeModal() {
+    document.getElementById("type-modal").style.display = "none";
+  }
+
+  function selectColor(hex) {
+    document.getElementById("type-color-picker").value = hex;
+    document.getElementById("type-color-hex").value = hex;
+  }
+
+  // Sync color picker and hex text input
+  const picker = document.getElementById("type-color-picker");
+  const hexInput = document.getElementById("type-color-hex");
+  if (picker && hexInput) {
+    picker.addEventListener("input", (e) => {
+      hexInput.value = e.target.value;
+    });
+    hexInput.addEventListener("input", (e) => {
+      if (/^#[0-9a-fA-F]{6}$/.test(e.target.value)) {
+        picker.value = e.target.value;
+      }
+    });
+  }
+
+  async function saveType(e) {
+    e.preventDefault();
+    const name = document.getElementById("type-name-input").value.trim().toLowerCase();
+    const label = document.getElementById("type-label-input").value.trim();
+    const description = document.getElementById("type-desc-input").value.trim();
+    const color = document.getElementById("type-color-hex").value.trim();
+
+    const submitBtn = document.getElementById("type-submit-btn");
+    if (submitBtn) {
+      submitBtn.classList.add("loading");
+      submitBtn.disabled = true;
+    }
+
+    try {
+      let res;
+      if (isEditing) {
+        res = await fetch("/api/types/" + encodeURIComponent(editingTypeName), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label, description, color })
+        });
+      } else {
+        res = await fetch("/api/types", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, label, description, color })
+        });
+      }
+
+      const data = await res.json();
+      if (data.ok) {
+        showToast("success", isEditing ? "类型已更新" : "类型已创建");
+        closeTypeModal();
+        if (window.SPA && typeof window.SPA.navigate === "function") {
+          window.SPA.navigate("/types", false);
+        } else {
+          location.reload();
+        }
+      } else {
+        showToast("error", "保存失败", data.error || "未知错误");
+      }
+    } catch (err) {
+      showToast("error", "操作失败", err.message);
+    } finally {
+      if (submitBtn) {
+        submitBtn.classList.remove("loading");
+        submitBtn.disabled = false;
+      }
+    }
+  }
+
+  async function deleteType(name) {
+    if (!confirm(`确定要删除自定义类型 "${name}" 吗？已存在的文档不会被删除，但将变为历史类型。`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/types/" + encodeURIComponent(name), {
+        method: "DELETE"
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showToast("success", `类型 "${name}" 已删除`);
+        if (window.SPA && typeof window.SPA.navigate === "function") {
+          window.SPA.navigate("/types", false);
+        } else {
+          location.reload();
+        }
+      } else {
+        showToast("error", "删除失败", data.error || "未知错误");
+      }
+    } catch (err) {
+      showToast("error", "删除失败", err.message);
+    }
+  }
+
+  // Expose to window for inline onclick attributes
+  window.openCreateModal = openCreateModal;
+  window.editTypeRow = editTypeRow;
+  window.deleteTypeRow = deleteTypeRow;
+  window.closeTypeModal = closeTypeModal;
+  window.selectColor = selectColor;
+  window.saveType = saveType;
+  window.deleteType = deleteType;
+})();
+</script>
+
+<style>
+.type-code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--muted);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+}
+
+.type-color-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.type-color-badge {
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-sm);
+  display: inline-block;
+  border: 1px solid rgba(0,0,0,0.1);
+}
+
+.status-custom {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.doc-count-link {
+  color: var(--primary);
+  font-weight: 500;
+  text-decoration: none;
+}
+.doc-count-link:hover {
+  text-decoration: underline;
+}
+
+.color-swatches {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.color-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid var(--card);
+  box-shadow: 0 0 0 1px var(--border);
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.color-swatch:hover {
+  transform: scale(1.2);
+}
+
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.modal-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.modal-content {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-6);
+  width: 100%;
+  max-width: 520px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.1);
+  z-index: 1;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-6);
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: var(--muted-foreground);
+  padding: 0;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  color: var(--foreground);
+}
+
+.form-group {
+  margin-bottom: var(--space-4);
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--foreground);
+}
+
+.form-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  background: var(--card);
+  color: var(--foreground);
+  box-sizing: border-box;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-group small {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+}
+</style>
+{% endblock %}

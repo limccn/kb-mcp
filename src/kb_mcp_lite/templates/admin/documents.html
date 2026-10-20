@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}文档 · kb-mcp admin{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1>文档</h1>
+    <p>浏览、筛选和编辑文档。</p>
+  </div>
+  <a class="button primary" href="/documents/new">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    新建文档
+  </a>
+</header>
+
+<div class="panel-list">
+  <section class="panel">
+    <form class="filter-grid" method="get" action="/documents">
+      <label>
+        <span>搜索</span>
+        <input type="text" name="q" value="{{ filters.q }}" placeholder="标题、内容、标签" />
+      </label>
+      <label>
+        <span>类型</span>
+        <select name="type">
+          <option value="">所有类型</option>
+          {% for t in doc_types %}
+          {% set t_name = t.name if t.name is defined else t %}
+          {% set t_label = t.label if (t.label is defined and t.label) else t_name %}
+          <option value="{{ t_name }}" {% if filters.type == t_name %}selected{% endif %}>
+            {% if t_label != t_name %}{{ t_label }} ({{ t_name }}){% else %}{{ t_name }}{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>标签</span>
+        <input type="text" name="tag" value="{{ filters.tag }}" placeholder="单个标签" />
+      </label>
+      <label class="checkbox-field">
+        <input type="checkbox" name="include_deleted" value="true" {% if filters.include_deleted %}checked{% endif %} />
+        <span>包含已删除</span>
+      </label>
+      <button class="button secondary" type="submit">应用</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>搜索结果</h2>
+      <span class="meta-chip">{{ pagination.total }} 个文档</span>
+    </div>
+    <div class="table-shell">
+      <table>
+        <thead>
+          <tr>
+            <th>标题</th>
+            <th>类型</th>
+            <th>标签</th>
+            <th>链接</th>
+            <th>更新时间</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td>
+              <div class="table-title">{{ row.doc.title }}</div>
+              <div class="table-subtitle">{{ row.doc.id }}</div>
+            </td>
+            <td>
+              {% set t_info = doc_types_map.get(row.doc.type) if doc_types_map is defined else none %}
+              {% set t_label = t_info.label if (t_info and t_info.label) else row.doc.type %}
+              <span class="status-pill" {% if t_info and t_info.color %}style="border-color: {{ t_info.color }}40; background-color: {{ t_info.color }}15; color: {{ t_info.color }}"{% endif %}>{{ t_label }}</span>
+            </td>
+            <td>
+              <div class="tag-line">
+                {% for tag in row.doc.tags %}
+                <span class="tag-pill small">{{ tag }}</span>
+                {% endfor %}
+              </div>
+            </td>
+            <td>{{ row.outlinks }} 出 · {{ row.backlinks }} 入</td>
+            <td>{{ row.doc.updated_at.strftime("%Y-%m-%d %H:%M") }}</td>
+            <td><a class="button ghost small-button" href="/documents/{{ row.doc.id }}" style="white-space:nowrap">打开</a></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6">
+            <div class="empty-state">
+              <div class="empty-state-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              </div>
+              <div class="empty-state-title">无匹配结果</div>
+              <p>请尝试其他搜索条件。</p>
+            </div>
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if pagination.total_pages > 1 %}
+    <nav class="pagination" aria-label="文档分页">
+      {% set base_qs = [] %}
+      {% if filters.q %}{% set base_qs = base_qs + [('q', filters.q)] %}{% endif %}
+      {% if filters.type %}{% set base_qs = base_qs + [('type', filters.type)] %}{% endif %}
+      {% if filters.tag %}{% set base_qs = base_qs + [('tag', filters.tag)] %}{% endif %}
+      {% if filters.include_deleted %}{% set base_qs = base_qs + [('include_deleted', 'true')] %}{% endif %}
+      {% set base_qs = base_qs + [('per_page', pagination.per_page | string)] %}
+
+      <a class="button ghost small-button pagination-prev" {% if pagination.has_prev %}href="/documents?{{ (base_qs + [('page', pagination.prev_page | string)]) | urlencode }}"{% else %}disabled{% endif %}>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        上一页
+      </a>
+
+      <div class="pagination-pages">
+        {% for p in range(1, pagination.total_pages + 1) %}
+        {% if p == pagination.page %}
+        <span class="pagination-page current">{{ p }}</span>
+        {% else %}
+        <a class="pagination-page" href="/documents?{{ (base_qs + [('page', p | string)]) | urlencode }}">{{ p }}</a>
+        {% endif %}
+        {% endfor %}
+      </div>
+
+      <a class="button ghost small-button pagination-next" {% if pagination.has_next %}href="/documents?{{ (base_qs + [('page', pagination.next_page | string)]) | urlencode }}"{% else %}disabled{% endif %}>
+        下一页
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+      </a>
+    </nav>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

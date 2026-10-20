@@ -34,20 +34,23 @@ Logging: structured JSON to stderr only; body content is never logged
 # every annotation into a string, causing issubclass() to crash with
 # "TypeError: issubclass() arg 1 must be a class".
 
+import hashlib
+import hmac
 import json
 import logging
 import os
 import sys
 from typing import Any
+from urllib.parse import quote, unquote, urlsplit
 
-from pydantic import BaseModel, Field
-from pydantic import ValidationError as PydanticValidationError
+from pydantic import BaseModel, Field, ValidationError as PydanticValidationError
 
 from kb_mcp_lite.md_io import render_document
 from kb_mcp_lite.schema import (
     Document,
     DuplicateError,
     IntegrityError,
+    KbMcpError,
     NotFoundError,
     SearchHit,
     ValidationError,
@@ -88,6 +91,7 @@ class KbAddInput(BaseModel):
     aliases: list[str] | None = None
     metadata: dict[str, Any] | None = None
     source: str | None = None
+    id: str | None = Field(default=None, min_length=1, max_length=512)
 
 
 class KbLinkInput(BaseModel):
@@ -352,6 +356,77 @@ def _create_store(vault: str | None = None) -> SqliteStore:
 # ---------------------------------------------------------------------------
 
 
+# ``mcp`` 1.x rewrites ``{x}`` into ``[^/]+`` in ``ResourceTemplate.matches``: a
+# template parameter can never span a slash, and whatever it captures is never
+# percent-decoded. kb ids are ``type/slug``, so the shape ``kb_add`` generates by
+# default matches no template at all, and the encoded form that does match
+# arrives in the handler with its ``%2F`` intact. Both halves are handled here:
+# normalise the URI before matching, and unquote once inside each handler.
+#
+# Path segments each template's parameters occupy, keyed by the URI authority
+# (``kb://<authority>/...``). ``kb://graph`` has two overlapping templates and
+# is disambiguated separately.
+_KB_PARAM_SEGMENTS = {
+    "doc": 1,
+    "links": 1,
+    "history": 1,
+    "export": 1,
+    "search": 1,
+    "help": 1,
+    "list": 1,
+}
+
+
+def _merge_segments(segments: list[str]) -> str:
+    """Collapse path segments into one template parameter, percent-encoded."""
+    return quote("/".join(unquote(s) for s in segments), safe="")
+
+
+def _is_graph_depth(segment: str) -> bool:
+    """Is ``segment`` a usable ``kb://graph/{id}/{depth}`` depth (1..8)?"""
+    try:
+        return 1 <= int(unquote(segment)) <= 8
+    except ValueError:
+        return False
+
+
+def _normalize_resource_uri(uri: str) -> str:
+    """Rewrite a ``kb://`` URI so the SDK's resource templates can match it.
+
+    ``kb://doc/dec/e2e-harness`` (the id shape ``kb_add`` generates) carries more
+    path segments than ``kb://doc/{id}`` has parameters, so it matches no
+    template. The surplus tail is re-joined into the last parameter and
+    percent-encoded — the only form the matcher accepts; each handler then
+    decodes it once. A URI whose segment count already equals the template
+    arity is returned unchanged, because re-encoding it would double-encode an
+    already-encoded id.
+
+    ``kb://graph`` is ambiguous (``{id}`` and ``{id}/{depth}`` share a prefix),
+    so the tail decides: a parseable depth uses the depth template, anything
+    else is part of the id and the default depth applies.
+
+    A URI that needs re-joining is rebuilt as ``kb://<authority>/<merged>``; a
+    ``?query`` or ``#fragment`` on it is dropped (no kb template uses one).
+    """
+    split = urlsplit(uri)
+    if split.scheme != "kb" or not split.netloc:
+        return uri
+
+    segments = split.path.split("/")[1:] if split.path.startswith("/") else []
+
+    if split.netloc == "graph":
+        if len(segments) >= 2 and _is_graph_depth(segments[-1]):
+            return f"kb://graph/{_merge_segments(segments[:-1])}/{segments[-1]}"
+        if len(segments) >= 2:
+            return f"kb://graph/{_merge_segments(segments)}"
+        return uri
+
+    expected = _KB_PARAM_SEGMENTS.get(split.netloc)
+    if expected is None or len(segments) <= expected:
+        return uri
+    return f"kb://{split.netloc}/{_merge_segments(segments)}"
+
+
 def _make_server(vault: str | None = None) -> Any:
     """Build and return a FastMCP instance with kb tools registered.
 
@@ -363,7 +438,18 @@ def _make_server(vault: str | None = None) -> Any:
     except ImportError as e:  # pragma: no cover
         raise RuntimeError("mcp package not installed; run: pip install mcp") from e
 
-    mcp = FastMCP("kb-mcp")
+    class _KbFastMCP(FastMCP):
+        """FastMCP that normalises ``kb://`` URIs before template matching.
+
+        ``FastMCP._setup_handlers`` registers this very method with the
+        low-level server, so overriding it intercepts every ``resources/read``
+        before ``ResourceTemplate.matches`` sees the URI.
+        """
+
+        async def read_resource(self, uri: Any) -> Any:
+            return await super().read_resource(_normalize_resource_uri(str(uri)))
+
+    mcp = _KbFastMCP("kb-mcp")
     store = _create_store(vault)
     logger = _setup_logging()
 
@@ -372,7 +458,7 @@ def _make_server(vault: str | None = None) -> Any:
     @mcp.tool()
     def kb_search(
         query: str,
-        type: str | None = None,
+        type: str | None = None,  # noqa: A002
         tags: list[str] | None = None,
         limit: int = 10,
         mode: str = "hybrid",
@@ -558,6 +644,7 @@ def _make_server(vault: str | None = None) -> Any:
         aliases: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
         source: str | None = None,
+        id: str | None = None,
     ) -> Any:
         """Create a new document.
 
@@ -572,6 +659,10 @@ def _make_server(vault: str | None = None) -> Any:
             aliases: Alternative IDs for this document (optional).
             metadata: Structured type-specific attributes dict (optional).
             source: Origin file path (optional, enables idempotent re-import).
+            id: Explicit document id (e.g. "reference/foo/bar"). When omitted,
+                the server auto-generates one from ``type`` and ``title``. Pass
+                this when the caller has a stable hierarchical id (multi-doc
+                imports, micro-app docs splits, etc.).
 
         Returns:
             {id: new_document_id, status: "created", hint: "Remember to link this document using kb_link."}.
@@ -585,22 +676,24 @@ def _make_server(vault: str | None = None) -> Any:
                 aliases=aliases,
                 metadata=metadata,
                 source=source,
+                id=id,
             )
         except PydanticValidationError as e:
             code, msg = _mcp_error(ValidationError(str(e)))
             raise RuntimeError(f"MCP error {code}: {msg}")
 
         logger.info(
-            "kb_add type=%r title=%r tags=%r aliases=%r metadata=%r source=%r",
+            "kb_add type=%r title=%r tags=%r aliases=%r metadata=%r source=%r id=%r",
             inp.type,
             inp.title,
             inp.tags,
             inp.aliases,
             inp.metadata,
             inp.source,
+            inp.id,
         )
         try:
-            doc_id = make_id(inp.type, inp.title)
+            doc_id = inp.id or make_id(inp.type, inp.title)
             doc = Document(
                 id=doc_id,
                 type=inp.type,
@@ -1542,8 +1635,8 @@ def _make_server(vault: str | None = None) -> Any:
         """
         logger.info("kb_schedule_status")
         try:
-            from kb_mcp_lite.config import load_config
             from kb_mcp_lite.scheduler import TaskScheduler
+            from kb_mcp_lite.config import load_config
 
             config = load_config()
             scheduler = TaskScheduler(store, config)
@@ -1567,8 +1660,8 @@ def _make_server(vault: str | None = None) -> Any:
         """
         logger.info("kb_schedule_run task_name=%r", task_name)
         try:
-            from kb_mcp_lite.config import load_config
             from kb_mcp_lite.scheduler import TaskScheduler
+            from kb_mcp_lite.config import load_config
 
             config = load_config()
             scheduler = TaskScheduler(store, config)
@@ -1634,6 +1727,7 @@ def _make_server(vault: str | None = None) -> Any:
         Returns:
             JSON string of the full document.
         """
+        id = unquote(id)
         logger.info("resource kb://doc/%s", id)
         try:
             doc = store.get(id)
@@ -1658,6 +1752,7 @@ def _make_server(vault: str | None = None) -> Any:
         Returns:
             JSON object with backlinks and outlinks arrays.
         """
+        id = unquote(id)
         logger.info("resource kb://links/%s", id)
         try:
             backlinks = store.backlinks(id)
@@ -1751,6 +1846,7 @@ def _make_server(vault: str | None = None) -> Any:
         Returns:
             JSON string with node ids and edges.
         """
+        id = unquote(id)
         logger.info("resource kb://graph/%s", id)
         try:
             sub = store.subgraph(id, depth=2)
@@ -1774,6 +1870,10 @@ def _make_server(vault: str | None = None) -> Any:
         Returns:
             JSON string with node ids and edges.
         """
+        id = unquote(id)
+        # _is_graph_depth() unquotes before admitting a tail as a depth, so a
+        # percent-encoded digit (e.g. %33) arrives here and must be decoded too.
+        depth = unquote(depth)
         logger.info("resource kb://graph/%s depth=%s", id, depth)
         try:
             n = int(depth)
@@ -1826,6 +1926,7 @@ def _make_server(vault: str | None = None) -> Any:
     )
     def kb_resource_list_type(type: str) -> str:
         """Return a summary list of documents filtered by type."""
+        type = unquote(type)
         logger.info("resource kb://list type=%r", type)
         try:
             docs = store.list(type=type, limit=1000)
@@ -1879,6 +1980,7 @@ def _make_server(vault: str | None = None) -> Any:
     )
     def kb_resource_history(id: str) -> str:
         """Return the version history for a document."""
+        id = unquote(id)
         logger.info("resource kb://history id=%r", id)
         try:
             history = store.document_history(id)
@@ -1899,6 +2001,7 @@ def _make_server(vault: str | None = None) -> Any:
     )
     def kb_resource_search(query: str) -> str:
         """Return search results for a query using hybrid mode."""
+        query = unquote(query)
         logger.info("resource kb://search query=%r", query)
         try:
             hits = store.search(query, limit=20, mode="hybrid")
@@ -1932,6 +2035,7 @@ def _make_server(vault: str | None = None) -> Any:
     )
     def kb_resource_export(id: str) -> str:
         """Return the document rendered as round-trippable Markdown."""
+        id = unquote(id)
         logger.info("resource kb://export id=%r", id)
         try:
             doc = store.get(id)
@@ -1949,6 +2053,7 @@ def _make_server(vault: str | None = None) -> Any:
     )
     def kb_resource_help(doc: str) -> str:
         """Return a built-in help document packaged with the server."""
+        doc = unquote(doc)
         logger.info("resource kb://help doc=%r", doc)
         try:
             from importlib import resources
@@ -2217,36 +2322,155 @@ def _make_server(vault: str | None = None) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def run(vault: str | None = None) -> None:
-    """Start the MCP server on stdio.
+def _require_http_token() -> str:
+    """Return the bearer token for HTTP transport, refusing to start without one.
+
+    The token comes from ``KB_MCP_HTTP_TOKEN`` only — never from an argument, so
+    it stays out of shell history and process listings. The error text names the
+    variable but never the value.
+    """
+    token = os.environ.get("KB_MCP_HTTP_TOKEN", "")
+    if not token.strip():
+        raise KbMcpError(
+            "KB_MCP_HTTP_TOKEN is not set (or empty): 'kb serve --transport http' requires a "
+            "non-empty bearer token. Set the environment variable to a secret value, e.g. "
+            "PowerShell: $env:KB_MCP_HTTP_TOKEN = '<secret>'. Do not pass it as a command-line "
+            "argument."
+        )
+    return token
+
+
+def _make_bearer_guard(app: Any, token: str) -> Any:
+    """Wrap an ASGI app so every HTTP method requires ``Authorization: Bearer <token>``.
+
+    FastMCP's own ``token_verifier`` needs OAuth ``AuthSettings`` (with a mandatory
+    ``issuer_url``), which does not describe a pre-shared static token. This guard sits
+    outside the transport instead, so POST, GET (the SSE stream) and DELETE are covered
+    identically — "auth on POST only" is structurally impossible here.
+
+    Comparison hashes both sides first: fixed length, so ``hmac.compare_digest`` is a
+    true constant-time comparison, and an empty presented value can never match an
+    empty configured one (which would compare equal as plain strings). Neither the
+    token nor the presented header is logged or echoed back.
+    """
+    expected = hashlib.sha256(token.encode("utf-8")).digest()
+
+    async def guard(scope: dict, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await app(scope, receive, send)
+            return
+        presented = b""
+        for key, value in scope.get("headers") or ():
+            if key == b"authorization" and value[:7].lower() == b"bearer ":
+                presented = value[7:]
+                break
+        if not hmac.compare_digest(hashlib.sha256(presented).digest(), expected):
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"www-authenticate", b"Bearer"),
+                    ],
+                }
+            )
+            await send({"type": "http.response.body", "body": b'{"error":"unauthorized"}'})
+            return
+        await app(scope, receive, send)
+
+    return guard
+
+
+def _allow_dns_rebinding_host(settings: Any, host: str) -> None:
+    """Add ``host`` to the DNS-rebinding allowlist FastMCP built for localhost.
+
+    FastMCP derives that allowlist from the host passed to its constructor, which is
+    always the localhost default here. Without this, an explicit ``--host`` would bind
+    the socket but reject every request whose Host header is not a localhost name —
+    protection stays on, it just learns the new host.
+    """
+    security = getattr(settings, "transport_security", None)
+    if security is None or not security.enable_dns_rebinding_protection:
+        return
+    # IPv6 字面量在 Host/Origin 里带方括号（RFC 3986），而 SDK 的匹配是
+    # ``host.startswith(base_host + ":")``——不加方括号的条目永远匹配不上。
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    for attr, entry in (("allowed_hosts", f"{host}:*"), ("allowed_origins", f"http://{host}:*")):
+        values = list(getattr(security, attr) or [])
+        if entry not in values:
+            values.append(entry)
+            setattr(security, attr, values)
+
+
+def run(
+    vault: str | None = None,
+    transport: str = "stdio",
+    host: str = "127.0.0.1",
+    port: int = 8000,
+) -> None:
+    """Start the MCP server.
 
     Args:
         vault: Optional vault name. Defaults to the current active vault.
+        transport: ``"stdio"`` (default) or ``"http"`` (streamable HTTP on ``/mcp``).
+        host: Interface to bind for HTTP transport. Defaults to loopback only.
+        port: Port to bind for HTTP transport.
 
     Called by ``kb serve`` CLI command.
 
-    Uses :meth:`FastMCP.run` (sync, anyio-backed) rather than the async
+    stdio uses :meth:`FastMCP.run` (sync, anyio-backed) rather than the async
     ``run_stdio_async`` + ``asyncio.run`` pair — the latter raises
     ``ValueError: I/O operation on closed file`` when stdin sees EOF
     before the asyncio loop is fully scheduled. ``anyio.run`` handles
     stdin/stdout lifecycle more gracefully under subprocess stdio.
+
+    HTTP requires ``KB_MCP_HTTP_TOKEN`` and refuses to start without it; the token
+    check runs before the store is opened or the port is bound.
     """
+    if transport not in ("stdio", "http"):
+        raise KbMcpError(f"unknown transport {transport!r}: expected 'stdio' or 'http'")
+    if transport == "stdio":
+        _make_server(vault).run(transport="stdio")
+        return
+
+    token = _require_http_token()
     mcp = _make_server(vault)
-    mcp.run(transport="stdio")
+    mcp.settings.host = host
+    mcp.settings.port = port
+    _allow_dns_rebinding_host(mcp.settings, host)
+
+    app = _make_bearer_guard(mcp.streamable_http_app(), token)
+    logging.getLogger("kb_mcp_lite").info(
+        "serving MCP over streamable HTTP on http://%s:%d%s (bearer token required)",
+        host,
+        port,
+        mcp.settings.streamable_http_path,
+    )
+
+    import uvicorn
+
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_level=os.environ.get("KB_MCP_LOG_LEVEL", "info").lower(),
+    )
 
 
 __all__ = [
-    "KbAddInput",
-    "KbDeleteInput",
-    "KbDuplicatesInput",
+    "run",
+    "KbSearchInput",
     "KbGetInput",
+    "KbAddInput",
     "KbLinkInput",
     "KbListInput",
-    "KbSearchInput",
-    "KbSimilarInput",
-    "KbUnlinkInput",
     "KbUpdateInput",
-    "run",
+    "KbDeleteInput",
+    "KbUnlinkInput",
+    "KbSimilarInput",
+    "KbDuplicatesInput",
 ]
 
 

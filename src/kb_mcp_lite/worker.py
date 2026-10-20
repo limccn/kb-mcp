@@ -100,7 +100,7 @@ def _open_worker_connection(db_path: str) -> sqlite3.Connection:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.execute("PRAGMA busy_timeout = 5000")
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return conn
 
@@ -252,7 +252,7 @@ class EmbeddingWorker:
         for w in workers:
             try:
                 w.stop(timeout=SHUTDOWN_JOIN_SECONDS)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.debug("atexit: error stopping worker", exc_info=True)
 
     @classmethod
@@ -301,7 +301,7 @@ class EmbeddingWorker:
         if conn is not None:
             try:
                 conn.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._conn = None
 
@@ -324,7 +324,7 @@ class EmbeddingWorker:
         while not self._stop_event.is_set():
             try:
                 entry = self._queue.claim_next()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.exception("embedding_queue.claim_next crashed")
                 error_sleep = min(error_sleep + 1.0, 5.0)
                 if self._stop_event.wait(error_sleep or 0.5):
@@ -339,7 +339,7 @@ class EmbeddingWorker:
                 continue
             try:
                 result = self._process_one(entry)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 # An unhandled exception in _process_one is a bug. We
                 # park the row in ``failed`` so it stops blocking the
                 # queue and surface a synthetic error message.
@@ -350,7 +350,7 @@ class EmbeddingWorker:
                         f"worker internal error: {e!r}",
                         permanent=True,
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001
                     logger.exception("mark_failed after crash also failed")
                 self.failed_total += 1
                 continue
@@ -381,7 +381,7 @@ class EmbeddingWorker:
                 "SELECT title, body FROM documents WHERE id = ? AND deleted_at IS NULL",
                 (doc_id,),
             ).fetchone()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             err = f"fetch failed: {e}"
             self._queue.mark_failed(doc_id, err, permanent=False)
             return WorkerJobResult(doc_id=doc_id, ok=False, error=err, permanent=False)
@@ -410,7 +410,7 @@ class EmbeddingWorker:
                 permanent = _is_permanent_error(str(e))
                 self._queue.mark_failed(doc_id, str(e), permanent=permanent)
                 return WorkerJobResult(doc_id=doc_id, ok=False, error=str(e), permanent=permanent)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 err = f"unexpected embedder error: {e!r}"
                 self._queue.mark_failed(doc_id, err, permanent=False)
                 return WorkerJobResult(doc_id=doc_id, ok=False, error=err, permanent=False)
@@ -422,7 +422,7 @@ class EmbeddingWorker:
         #    busy_timeout serialise the two writers at the WAL index.
         try:
             self._write_vector(doc_id, vector)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             err = f"vec0 write failed: {e}"
             self._queue.mark_failed(doc_id, err, permanent=False)
             return WorkerJobResult(doc_id=doc_id, ok=False, error=err, permanent=False)
@@ -472,7 +472,7 @@ class EmbeddingWorker:
             row = self._conn.execute(
                 "SELECT rowid FROM documents WHERE id = ?", (doc_id,)
             ).fetchone()
-        except Exception:
+        except Exception:  # noqa: BLE001
             return
         if row is None:
             return
@@ -492,7 +492,7 @@ class EmbeddingWorker:
                 (rowid, serialize_float32(vector)),
             )
             self._conn.commit()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.debug("docs_vec write skipped for %s: %s", doc_id, e)
             return
 
@@ -519,8 +519,8 @@ def _is_permanent_error(msg: str) -> bool:
 
 
 __all__ = [
-    "IDLE_POLL_SECONDS",
-    "SHUTDOWN_JOIN_SECONDS",
     "EmbeddingWorker",
     "WorkerJobResult",
+    "IDLE_POLL_SECONDS",
+    "SHUTDOWN_JOIN_SECONDS",
 ]

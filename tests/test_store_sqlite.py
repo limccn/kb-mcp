@@ -18,6 +18,7 @@ from kb_mcp_lite import (
 )
 from kb_mcp_lite.store.sqlite import SqliteStore
 
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -87,8 +88,7 @@ def test_schema_version_recorded(tmp_path: Path) -> None:
     # Migration 0003 (vec0) applies when the connection can load sqlite-vec
     # (dev/vec extras install pysqlite3, which carries extension support).
     # Migration 0007 (embedding_queue) is part of v0.8.0 and always applies.
-    # Migration 0009 (custom_types) is vault-scoped custom document types.
-    assert [r[0] for r in rows] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    assert [r[0] for r in rows] == [1, 2, 3, 4, 5, 6, 7, 8]
     conn.close()
     s.close()
 
@@ -613,36 +613,3 @@ def test_audit_log_has_entries(store: SqliteStore) -> None:
     assert "create" in actions
     assert "update" in actions
     assert "delete" in actions
-
-
-def test_store_custom_types_crud(store: SqliteStore) -> None:
-    # Initially empty
-    assert store.list_custom_types() == []
-    assert store.get_custom_type("spec") is None
-
-    # Save custom type
-    created = store.save_custom_type("spec", "技术规范", "系统设计规范", "#123456")
-    assert created["name"] == "spec"
-    assert created["label"] == "技术规范"
-
-    # Get custom type
-    item = store.get_custom_type("spec")
-    assert item is not None
-    assert item["name"] == "spec"
-    assert item["label"] == "技术规范"
-    assert item["color"] == "#123456"
-
-    # List custom types
-    items = store.list_custom_types()
-    assert len(items) == 1
-    assert items[0]["name"] == "spec"
-
-    # Update custom type
-    updated = store.save_custom_type("spec", "新规范", "新描述", "#654321")
-    assert updated["label"] == "新规范"
-    assert store.get_custom_type("spec")["label"] == "新规范"
-
-    # Delete custom type
-    assert store.delete_custom_type("spec") is True
-    assert store.get_custom_type("spec") is None
-    assert store.list_custom_types() == []

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "kb": {
+      "type": "stdio",
+      "command": "C:\\path\\to\\kbmcp-rt\\kb-mcp.exe",
+      "args": ["serve"],
+      "env": {}
+    }
+  }
+}

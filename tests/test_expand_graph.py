@@ -1,7 +1,6 @@
 """Tests for multi-hop RAG / graph-enhanced search (v0.8 特性 #5)."""
 
 import pytest
-
 from kb_mcp_lite.schema import Document
 from kb_mcp_lite.store.sqlite import SqliteStore
 

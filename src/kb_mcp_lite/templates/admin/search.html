@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}搜索 · kb-mcp admin{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1>搜索</h1>
+    <p>测试词汇、模糊、语义和混合搜索模式。</p>
+  </div>
+</header>
+
+<div class="panel-list">
+<section class="panel">
+  <form method="get" action="/search" class="filter-grid search-grid">
+    <label class="span-2">
+      <span>搜索词</span>
+      <input type="text" name="query" value="{{ filters.query }}" placeholder="为什么选择 SQLite？" />
+    </label>
+    <label>
+      <span>类型</span>
+      <select name="type">
+        <option value="">所有类型</option>
+        {% for t in doc_types %}
+        {% set t_name = t.name if t.name is defined else t %}
+        {% set t_label = t.label if (t.label is defined and t.label) else t_name %}
+        <option value="{{ t_name }}" {% if filters.type == t_name %}selected{% endif %}>
+          {% if t_label != t_name %}{{ t_label }} ({{ t_name }}){% else %}{{ t_name }}{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span>标签</span>
+      <input type="text" name="tags" value="{{ filters.tags }}" placeholder="逗号分隔" />
+    </label>
+    <label>
+      <span>模式</span>
+      <select name="mode">
+        {% for search_mode in search_modes %}
+        <option value="{{ search_mode }}" {% if filters.mode == search_mode %}selected{% endif %}>{{ search_mode }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span>数量</span>
+      <input type="number" min="1" max="100" name="limit" value="{{ filters.limit }}" />
+    </label>
+    <button class="button primary" type="submit">执行搜索</button>
+  </form>
+</section>
+
+{% if errors %}
+<section class="alert error">
+  {% for error in errors %}
+  <div>{{ error }}</div>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>搜索结果</h2>
+    <span class="meta-chip">{{ hits|length }} 条结果</span>
+  </div>
+  <div class="result-list">
+    {% for hit in hits %}
+    <article class="result-card" onclick="if(window.SPA && typeof window.SPA.navigate === 'function') { window.SPA.navigate('/documents/{{ hit.doc.id }}'); } else { window.location.href='/documents/{{ hit.doc.id }}'; }" style="cursor: pointer;">
+      <div class="result-head">
+        <div>
+          <a class="result-title" href="/documents/{{ hit.doc.id }}">{{ hit.doc.title }}</a>
+          {% set hit_t_info = doc_types_map.get(hit.doc.type) if doc_types_map is defined else none %}
+          {% set hit_t_label = hit_t_info.label if (hit_t_info and hit_t_info.label) else hit.doc.type %}
+          <div class="row-meta">{{ hit_t_label }} · {{ hit.doc.id }}</div>
+        </div>
+        <span class="score-pill">{{ "%.3f"|format(hit.score) }}</span>
+      </div>
+      <p class="snippet">{{ hit.snippet|safe if hit.snippet else hit.doc.body[:220] }}</p>
+      <div class="tag-line">
+        {% for tag in hit.doc.tags %}
+        <span class="tag-pill small">{{ tag }}</span>
+        {% endfor %}
+      </div>
+    </article>
+    {% else %}
+        <div class="empty-state">
+          <div class="empty-state-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          </div>
+          <div class="empty-state-title">开始搜索</div>
+          <p>测试词汇、模糊、语义和混合检索。</p>
+        </div>
+    {% endfor %}
+  </div>
+</section>
+</div>
+{% endblock %}

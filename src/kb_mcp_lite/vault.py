@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
@@ -96,8 +97,14 @@ def get_kb_home() -> Path:
 
 
 def get_current_vault_name() -> str:
-    """Return the active vault name from ``KB_MCP_VAULT`` or default."""
-    return os.environ.get("KB_MCP_VAULT", _DEFAULT_VAULT_NAME)
+    """Return the active vault name — the same value every read/write path resolves.
+
+    Delegates to :meth:`VaultManager.get_current` (``KB_MCP_VAULT`` first, then
+    the registry), so a report cannot name a different vault than the one
+    ``resolve_path()`` would open. An env-only version here once disagreed with
+    the registry and made the admin page show ``default`` for another vault.
+    """
+    return VaultManager().get_current()
 
 
 class VaultManager:
@@ -173,7 +180,16 @@ class VaultManager:
         return [VaultInfo(**v) for v in data.get("vaults", [])]
 
     def get_current(self) -> str:
-        """Return the current active vault name."""
+        """Return the current active vault name.
+
+        ``KB_MCP_VAULT`` (when set to a non-blank value) overrides the
+        registry's ``current`` key — the module docstring promises the variable
+        wins, and every read/write path reaches its vault through
+        :meth:`resolve_path`, which defaults to this method.
+        """
+        env = os.environ.get("KB_MCP_VAULT", "").strip()
+        if env:
+            return env
         data = self._read_registry()
         return data.get("current", _DEFAULT_VAULT_NAME)
 
@@ -671,23 +687,20 @@ class VaultManager:
                 continue
             parts = line.split("\x1f")
             if len(parts) >= 7:
-                commits.append(
-                    {
-                        "hash": parts[0],
-                        "short_hash": parts[1],
-                        "author": parts[2],
-                        "email": parts[3],
-                        "date": parts[4],
-                        "relative_date": parts[5],
-                        "message": parts[6],
-                    }
-                )
+                commits.append({
+                    "hash": parts[0],
+                    "short_hash": parts[1],
+                    "author": parts[2],
+                    "email": parts[3],
+                    "date": parts[4],
+                    "relative_date": parts[5],
+                    "message": parts[6],
+                })
         return commits
 
     def git_status_info(self, name: str | None = None) -> dict[str, Any]:
         """Return structured Git and pending export status for the vault."""
         import subprocess
-
         from kb_mcp_lite.md_io import pending_export
         from kb_mcp_lite.store.sqlite import SqliteStore
 
@@ -850,7 +863,6 @@ class VaultManager:
     ) -> dict[str, str]:
         """Return unified diffs for pending export documents (Database vs on-disk Markdown)."""
         import difflib
-
         from kb_mcp_lite.md_io import _export_candidate, _same_export_content, render_document
         from kb_mcp_lite.store.sqlite import SqliteStore
 
@@ -866,9 +878,7 @@ class VaultManager:
                     if doc.source:
                         candidate = _export_candidate(base, doc)
                         if candidate.is_file():
-                            old_lines = candidate.read_text(encoding="utf-8").splitlines(
-                                keepends=True
-                            )
+                            old_lines = candidate.read_text(encoding="utf-8").splitlines(keepends=True)
                             d = "".join(
                                 difflib.unified_diff(
                                     old_lines,
@@ -916,11 +926,11 @@ class VaultManager:
 
 
 __all__ = [
-    "VaultAlreadyExistsError",
-    "VaultError",
-    "VaultInfo",
     "VaultManager",
+    "VaultInfo",
+    "VaultError",
     "VaultNotFoundError",
-    "get_current_vault_name",
+    "VaultAlreadyExistsError",
     "get_kb_home",
+    "get_current_vault_name",
 ]

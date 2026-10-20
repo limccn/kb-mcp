@@ -1,6 +1,6 @@
 """Tests for slugify() CJK fallback (kb-mcp-lite v0.2.2)."""
 
-from kb_mcp_lite.schema import make_id, slugify
+from kb_mcp_lite.schema import slugify, make_id
 
 
 def test_slugify_ascii_unchanged():
@@ -71,3 +71,4 @@ def test_slugify_long_title_truncated():
     s = slugify(title)
     assert s == "chartcontainer-exportmodal-4f4a1fa1"
     assert len(s) <= 40
+

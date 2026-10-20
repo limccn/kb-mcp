@@ -17,12 +17,12 @@ Plus NFR-S-3 (path-traversal guard) for both ``import_dir`` and
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 
+from collections.abc import Iterator
+
 import pytest
-from pydantic import ValidationError as PydanticValidationError
 
 from kb_mcp_lite.md_io import (
     Frontmatter,
@@ -33,6 +33,8 @@ from kb_mcp_lite.md_io import (
     pending_export,
     render_document,
 )
+from pydantic import ValidationError as PydanticValidationError
+
 from kb_mcp_lite.schema import (
     Document,
     ImportReport,
@@ -40,6 +42,7 @@ from kb_mcp_lite.schema import (
     make_id,
 )
 from kb_mcp_lite.store.sqlite import SqliteStore
+
 
 # ---------------------------------------------------------------------------
 # Fixtures

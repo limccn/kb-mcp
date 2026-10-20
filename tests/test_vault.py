@@ -17,6 +17,7 @@ from click.testing import CliRunner
 
 from kb_mcp_lite.cli import cli
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -306,7 +307,7 @@ class TestVaultManagerOps:
             mgr.rename("ghost", "new-ghost")
 
     def test_rename_to_existing_raises(self, tmp_path: Path) -> None:
-        from kb_mcp_lite.vault import VaultAlreadyExistsError, VaultManager
+        from kb_mcp_lite.vault import VaultManager, VaultAlreadyExistsError
 
         mgr = VaultManager(kb_home=tmp_path)
         mgr.create("a")
@@ -325,7 +326,7 @@ class TestVaultManagerOps:
         assert not any(v.name == "removable" for v in mgr.list_vaults())
 
     def test_remove_last_vault_raises(self, tmp_path: Path) -> None:
-        from kb_mcp_lite.vault import VaultError, VaultManager
+        from kb_mcp_lite.vault import VaultManager, VaultError
 
         mgr = VaultManager(kb_home=tmp_path)
         with pytest.raises(VaultError):

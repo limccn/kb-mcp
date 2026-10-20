@@ -1,0 +1,244 @@
+{% extends "base.html" %}
+{% block title %}设置 · kb-mcp admin{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1>设置与健康</h1>
+    <p>查看数据库、环境和健康状态。</p>
+  </div>
+</header>
+
+<section class="stats-grid">
+  <article class="stat-panel"><span>KB_MCP_HOME</span><strong>{{ kb_home or "默认" }}</strong></article>
+  <article class="stat-panel"><span>Schema 版本</span><strong>{{ version }}</strong></article>
+  <article class="stat-panel"><span>向量嵌入</span><strong>{{ "已启用" if embedder_enabled else "未启用" }}</strong></article>
+  <article class="stat-panel"><span>维度</span><strong>{{ embedder_dim }}</strong></article>
+</section>
+
+<section class="panel" style="margin-bottom: var(--space-6);">
+  <div class="panel-head"><h2>嵌入队列</h2></div>
+  <div class="stats-grid">
+    <article class="stat-panel"><span>等待中</span><strong id="embed-pending">{{ embed_queue.pending }}</strong></article>
+    <article class="stat-panel"><span>处理中</span><strong id="embed-progress">{{ embed_queue.in_progress }}</strong></article>
+    <article class="stat-panel"><span>已完成</span><strong id="embed-done">{{ embed_queue.done }}</strong></article>
+    <article class="stat-panel"><span>失败</span><strong id="embed-failed">{{ embed_queue.failed }}</strong></article>
+  </div>
+  <div style="margin-top: var(--space-4);">
+    <button class="button secondary" onclick="refreshEmbedQueue()">
+      <span class="button-text">刷新队列</span>
+      <span class="button-spinner"></span>
+    </button>
+    <button class="button primary" onclick="retryFailedEmbeddings()" style="margin-left: 8px;">
+      <span class="button-text">重试失败</span>
+      <span class="button-spinner"></span>
+    </button>
+  </div>
+</section>
+
+<div class="split-grid">
+  <div class="panel-list">
+    <section class="panel">
+      <div class="panel-head"><h2>配置</h2></div>
+      <div class="meta-list">
+        <div><span>配置文件</span><strong>{{ config_path }}</strong></div>
+      </div>
+      <div>
+        <textarea id="config-editor" class="config-editor">{{ config_content }}</textarea>
+        <div class="config-actions">
+          <button id="config-save-btn" class="button primary" onclick="saveConfig(this)">
+            <span class="button-text">保存配置</span>
+            <span class="button-spinner"></span>
+          </button>
+          <span id="config-save-result"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>操作</h2></div>
+      <div class="list compact actions-list">
+        <div class="list-row">
+          <div>
+            <div class="row-title">从同步目录导入</div>
+            <div class="row-meta">从知识库的 <code>sync_dir/md/</code> 导入 Markdown 文件</div>
+          </div>
+          <button class="button primary" onclick="runVaultAction(this, '/api/vaults/import', '导入')">
+            <span class="button-text">导入</span>
+            <span class="button-spinner"></span>
+          </button>
+        </div>
+        <div class="list-row">
+          <div>
+            <div class="row-title">Git 提交</div>
+            <div class="row-meta">将文档导出为 Markdown 并进行 git 提交</div>
+          </div>
+          <button class="button primary" onclick="runVaultCommit(this)">
+            <span class="button-text">提交</span>
+            <span class="button-spinner"></span>
+          </button>
+        </div>
+        <div class="list-row">
+          <div>
+            <div class="row-title">重建向量</div>
+            <div class="row-meta">重新计算所有文档的语义搜索向量</div>
+          </div>
+          <button class="button primary" onclick="runVaultAction(this, '/api/vaults/embed', '嵌入')">
+            <span class="button-text">嵌入</span>
+            <span class="button-spinner"></span>
+          </button>
+        </div>
+      </div>
+      <div id="action-result" style="display:none;"></div>
+    </section>
+  </div>
+
+  <div class="panel-list">
+    <section class="panel">
+      <div class="panel-head"><h2>存储</h2></div>
+      <div class="meta-list">
+        <div><span>数据库路径</span><strong>{{ db_path }}</strong></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>健康检查</h2></div>
+      <div class="list compact">
+        {% for check in doctor_report.checks %}
+        <div class="list-row">
+          <div>
+            <div class="row-title">{{ check.name }}</div>
+            <div class="row-meta">{{ check.detail }}</div>
+          </div>
+          <span class="status-pill {{ 'status-ok' if check.ok else 'status-bad' }}">{{ "正常" if check.ok else "异常" }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+function setButtonLoading(btn, loading) {
+  if (!btn) return;
+  if (loading) btn.classList.add('loading');
+  else btn.classList.remove('loading');
+  btn.disabled = loading;
+}
+
+function saveConfig(btn) {
+  const content = document.getElementById('config-editor').value;
+  const resultSpan = document.getElementById('config-save-result');
+  setButtonLoading(btn, true);
+  resultSpan.textContent = '保存中…';
+  fetch('/api/config', {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({content: content})
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        resultSpan.textContent = '✓ 已保存';
+        resultSpan.style.color = 'var(--success)';
+        showToast('success', '配置已保存');
+      } else {
+        resultSpan.textContent = '✗ ' + (data.error || '错误');
+        resultSpan.style.color = 'var(--destructive)';
+        showToast('error', '保存失败', data.error || '错误');
+      }
+    })
+    .catch(e => {
+      resultSpan.textContent = '✗ ' + e.message;
+      resultSpan.style.color = 'var(--destructive)';
+      showToast('error', '保存失败', e.message);
+    })
+    .finally(() => setButtonLoading(btn, false));
+}
+
+function runVaultAction(btn, url, label) {
+  const resultDiv = document.getElementById('action-result');
+  setButtonLoading(btn, true);
+  resultDiv.style.display = 'block';
+  resultDiv.innerHTML = '<div class="empty-state">执行中…</div>';
+
+  fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        let html = '<div class="alert success"><strong>成功:</strong><ul>';
+        for (const [k, v] of Object.entries(data)) {
+          if (k !== 'ok') html += '<li>' + k + ': ' + JSON.stringify(v) + '</li>';
+        }
+        html += '</ul></div>';
+        resultDiv.innerHTML = html;
+        showToast('success', label + '完成');
+      } else {
+        resultDiv.innerHTML = '<div class="alert error">' + (data.error || '未知错误') + '</div>';
+        showToast('error', label + '失败', data.error || '未知错误');
+      }
+    })
+    .catch(e => {
+      resultDiv.innerHTML = '<div class="alert error">' + e.message + '</div>';
+      showToast('error', label + '失败', e.message);
+    })
+    .finally(() => setButtonLoading(btn, false));
+}
+
+function runVaultCommit(btn) {
+  const msg = prompt('提交信息:', 'admin commit');
+  if (!msg) return;
+  const resultDiv = document.getElementById('action-result');
+  setButtonLoading(btn, true);
+  resultDiv.style.display = 'block';
+  resultDiv.innerHTML = '<div class="empty-state">执行中…</div>';
+
+  fetch('/api/vaults/commit', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({message: msg})
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        resultDiv.innerHTML = '<div class="alert success"><strong>提交成功:</strong> ' + (data.output || '') + '</div>';
+        showToast('success', '提交完成');
+      } else {
+        resultDiv.innerHTML = '<div class="alert error">' + (data.error || '未知错误') + '</div>';
+        showToast('error', '提交失败', data.error || '未知错误');
+      }
+    })
+    .catch(e => {
+      resultDiv.innerHTML = '<div class="alert error">' + e.message + '</div>';
+      showToast('error', '提交失败', e.message);
+    })
+    .finally(() => setButtonLoading(btn, false));
+}
+
+function refreshEmbedQueue() {
+  fetch('/api/embed/status')
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('embed-pending').textContent = data.pending || 0;
+      document.getElementById('embed-progress').textContent = data.in_progress || 0;
+      document.getElementById('embed-done').textContent = data.done || 0;
+      document.getElementById('embed-failed').textContent = data.failed || 0;
+      showToast('success', '嵌入队列已刷新');
+    })
+    .catch(e => showToast('error', '刷新失败', e.message));
+}
+
+function retryFailedEmbeddings() {
+  fetch('/api/embed/retry', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        showToast('success', '失败的嵌入已加入重试队列');
+        setTimeout(refreshEmbedQueue, 1000);
+      } else {
+        showToast('error', '重试失败', data.error || '未知错误');
+      }
+    })
+    .catch(e => showToast('error', '重试失败', e.message));
+}
+</script>
+{% endblock %}

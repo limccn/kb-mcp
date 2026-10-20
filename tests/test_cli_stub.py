@@ -19,6 +19,7 @@ from kb_mcp_lite.cli import cli
 from kb_mcp_lite.schema import Document
 from kb_mcp_lite.stub_store import StubStore
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

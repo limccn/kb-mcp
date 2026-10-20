@@ -24,12 +24,14 @@ Conventions
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable
+
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
+from collections.abc import Iterable
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
 
 # ---------------------------------------------------------------------------
 # Built-in document types

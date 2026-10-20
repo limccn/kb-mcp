@@ -67,7 +67,7 @@ def extract_body_references(
 
 
 def sync_body_references(
-    store: SqliteStore,
+    store: SqliteStore,  # noqa: F821 — forward ref
     doc_id: str,
     body: str,
     *,

@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}概览 · kb-mcp admin{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1>概览</h1>
+    <p>本地知识库的管理控制台。</p>
+  </div>
+  <div class="header-meta">
+    <span class="meta-chip">数据库: {{ db_path }}</span>
+    <span class="meta-chip">{{ "向量已启用" if embed_enabled else "向量未启用" }}{% if embed_dim %} · {{ embed_dim }}d{% endif %}</span>
+  </div>
+</header>
+
+{% if stats.conflicts and stats.conflicts > 0 %}
+<section class="alert error" style="margin-bottom: var(--space-5);">
+  <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+    <div>
+      <strong>⚠️ Git 同步冲突:</strong>
+      有 {{ stats.conflicts }} 个文档包含未解决的合并冲突标记。
+    </div>
+    <a href="/documents?type=conflict" class="button primary small-button" style="background: var(--destructive); color: var(--destructive-foreground); box-shadow: none;">查看冲突</a>
+  </div>
+</section>
+{% endif %}
+
+<section class="stats-grid">
+  <article class="stat-panel"><span>有效文档</span><strong>{{ stats.documents }}</strong></article>
+  <article class="stat-panel"><span>已删除文档</span><strong>{{ stats.deleted_documents }}</strong></article>
+  <article class="stat-panel"><span>类型数</span><strong>{{ stats.types }}</strong></article>
+  <article class="stat-panel"><span>链接数</span><strong>{{ stats.links }}</strong></article>
+  <article class="stat-panel"><span>孤立文档</span><strong>{{ stats.orphan_documents }}</strong></article>
+  <article class="stat-panel"><span>向量数</span><strong>{{ stats.vectors }}</strong></article>
+</section>
+
+<section class="layout-grid">
+  <div class="layout-main">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>最近更新</h2>
+      </div>
+      <div class="list">
+        {% for doc in recent_docs %}
+        <a class="list-row" href="/documents/{{ doc.id }}">
+          <div>
+            <div class="row-title">{{ doc.title }}</div>
+            {% set doc_t_info = doc_types_map.get(doc.type) if doc_types_map is defined else none %}
+            {% set doc_t_label = doc_t_info.label if (doc_t_info and doc_t_info.label) else doc.type %}
+            <div class="row-meta">{{ doc_t_label }} · {{ doc.id }}</div>
+          </div>
+          <time>{{ doc.updated_at.strftime("%Y-%m-%d %H:%M") }}</time>
+        </a>
+        {% else %}
+        <div class="empty-state">
+          <div class="empty-state-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+          </div>
+          <div class="empty-state-title">暂无文档</div>
+          <a href="/documents/new" class="button primary">新建文档</a>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>健康检查</h2>
+      </div>
+      <div class="doctor-status {{ 'ok' if doctor_report.ok else 'warn' }}">
+        {{ "健康" if doctor_report.ok else "需要关注" }}
+      </div>
+      <div class="list compact">
+        {% for check in doctor_report.checks %}
+        <div class="list-row">
+          <div>
+            <div class="row-title">{{ check.name }}</div>
+            <div class="row-meta">{{ check.detail }}</div>
+          </div>
+          <span class="status-pill {{ 'status-ok' if check.ok else 'status-bad' }}">{{ "正常" if check.ok else "异常" }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+  </div>
+
+  <div class="layout-sidebar">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>类型分布</h2>
+      </div>
+      <div class="bar-list">
+        {% for type_name, count in type_counts %}
+        <div class="bar-row">
+          {% set dist_t_info = doc_types_map.get(type_name) if doc_types_map is defined else none %}
+          {% set dist_t_label = dist_t_info.label if (dist_t_info and dist_t_info.label) else type_name %}
+          <div class="bar-label">{{ dist_t_label }}</div>
+          <div class="bar-track"><div class="bar-fill" style="width: {{ (count / stats.documents * 100) if stats.documents else 0 }}%{% if dist_t_info and dist_t_info.color %}; background: {{ dist_t_info.color }}{% endif %}"></div></div>
+          <div class="bar-value">{{ count }}</div>
+        </div>
+        {% else %}
+        <div class="empty-state">
+          <div class="empty-state-title">暂无类型</div>
+          <p>创建文档后将显示类型分布。</p>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>热门标签</h2>
+      </div>
+      <div class="tag-cloud">
+        {% for tag, count in tag_counts %}
+        <span class="tag-pill">{{ tag }} <small>{{ count }}</small></span>
+        {% else %}
+        <div class="empty-state">
+          <div class="empty-state-title">暂无标签</div>
+          <p>为文档添加标签后将显示在这里。</p>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+  </div>
+</section>
+
+{% endblock %}

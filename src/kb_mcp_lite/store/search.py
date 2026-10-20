@@ -40,7 +40,7 @@ class SearchMixin:
     def search(
         self,
         query: str,
-        type: str | None = None,
+        type: str | None = None,  # noqa: A002
         tags: list[str] | None = None,
         limit: int = 10,
         mode: str = "lexical",

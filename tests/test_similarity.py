@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from kb_mcp_lite.embedder import Embedder
-from kb_mcp_lite.schema import Document, NotFoundError
+from kb_mcp_lite.schema import Document, NotFoundError, ValidationError
 from kb_mcp_lite.store.sqlite import SqliteStore
 
 
@@ -32,7 +32,7 @@ class _HashingEmbedder(Embedder):
 
     def embed(self, text: str) -> list[float]:
         out: list[float] = []
-        for i in range(max(1, len(text) - 2)):
+        for i in range(0, max(1, len(text) - 2)):
             h = hashlib.md5(text[i : i + 3].encode("utf-8")).digest()
             out.append((h[0] - 128) / 128.0)
         if not out:
@@ -147,15 +147,32 @@ class TestSimilarDocs:
         with pytest.raises(NotFoundError):
             store.similar_docs("nonexistent", limit=5)
 
-    def test_similar_empty_when_no_embedder(self, tmp_path: Path) -> None:
-        """Without an embedder, similar_docs returns empty list."""
+    def test_similar_raises_without_embedder(self, tmp_path: Path) -> None:
+        """Without an embedder, similar_docs reports the reason instead of []."""
         from kb_mcp_lite.embedder import NullEmbedder
 
         db = tmp_path / "noemb.db"
         s = SqliteStore(db, embedder=NullEmbedder())
         s.add(Document(id="proj/a", type="project", title="A", body="test"))
-        r = s.similar_docs("proj/a", limit=5)
-        assert r == []
+        with pytest.raises(ValidationError, match="embedder"):
+            s.similar_docs("proj/a", limit=5)
+
+    def test_similar_raises_when_vec0_unavailable(self, tmp_path: Path) -> None:
+        """Enabled embedder + dead vec0 connection is reported as vec0, not []."""
+        db = tmp_path / "novec.db"
+        s = SqliteStore(db, embedder=_HashingEmbedder(dim=64), auto_start_worker=False)
+        s.add(Document(id="proj/a", type="project", title="A", body="test"))
+        s._vec_conn = False  # same cached sentinel _vec_conn_lazy() sets on failure
+        with pytest.raises(ValidationError, match="vec0"):
+            s.similar_docs("proj/a", limit=5)
+
+    def test_similar_raises_when_doc_not_embedded(self, tmp_path: Path) -> None:
+        """Enabled embedder + working vec0, but this document has no vector yet."""
+        db = tmp_path / "notyet.db"
+        s = SqliteStore(db, embedder=_HashingEmbedder(dim=64), auto_start_worker=False)
+        s.add(Document(id="proj/a", type="project", title="A", body="test"))
+        with pytest.raises(ValidationError, match="embedding"):
+            s.similar_docs("proj/a", limit=5)
 
 
 class TestSuggestTags:
@@ -172,6 +189,17 @@ class TestSuggestTags:
         """Unknown doc should not crash — but suggest_tags relies on
         similar_docs which raises NotFoundError."""
         # Note: the current impl delegates to similar_docs which raises.
+        pass
+
+    def test_suggest_tags_raises_without_embedder(self, tmp_path: Path) -> None:
+        """suggest_tags delegates to similar_docs, so the reason propagates."""
+        from kb_mcp_lite.embedder import NullEmbedder
+
+        db = tmp_path / "noemb.db"
+        s = SqliteStore(db, embedder=NullEmbedder())
+        s.add(Document(id="proj/a", type="project", title="A", body="test"))
+        with pytest.raises(ValidationError, match="embedder"):
+            s.suggest_tags("proj/a", limit=5)
 
     def test_suggest_tags_handles_untagged_docs(self, store: SqliteStore) -> None:
         """A doc with no tags that is similar to tagged docs still gets suggestions."""
@@ -222,15 +250,15 @@ class TestSuggestType:
         weights = [w for _, w in results]
         assert weights == sorted(weights, reverse=True)
 
-    def test_suggest_type_empty_for_orphan(self, tmp_path: Path) -> None:
-        """A doc whose similar docs are all a different type gets suggestions."""
+    def test_suggest_type_raises_without_embedder(self, tmp_path: Path) -> None:
+        """suggest_type delegates to similar_docs, so the reason propagates."""
         from kb_mcp_lite.embedder import NullEmbedder
 
         db = tmp_path / "noemb.db"
         s = SqliteStore(db, embedder=NullEmbedder())
         s.add(Document(id="proj/a", type="project", title="A", body="test"))
-        r = s.suggest_type("proj/a", limit=5)
-        assert r == []
+        with pytest.raises(ValidationError, match="embedder"):
+            s.suggest_type("proj/a", limit=5)
 
 
 class TestFindDuplicates:
@@ -256,16 +284,38 @@ class TestFindDuplicates:
         strict = store.find_duplicates(threshold=0.1, limit=50)
         assert len(strict) <= len(loose)
 
-    def test_dedup_no_duplicates_returns_empty(self, tmp_path: Path) -> None:
-        """Without an embedder, dedup returns empty list."""
+    def test_dedup_raises_without_embedder(self, tmp_path: Path) -> None:
+        """Without an embedder, dedup reports the reason instead of []."""
         from kb_mcp_lite.embedder import NullEmbedder
 
         db = tmp_path / "noemb.db"
         s = SqliteStore(db, embedder=NullEmbedder())
         s.add(Document(id="proj/a", type="project", title="A", body="test"))
         s.add(Document(id="proj/b", type="project", title="B", body="other"))
-        r = s.find_duplicates(threshold=0.5)
-        assert r == []
+        with pytest.raises(ValidationError, match="embedder"):
+            s.find_duplicates(threshold=0.5)
+
+    def test_dedup_raises_when_vec0_unavailable(self, tmp_path: Path) -> None:
+        """Enabled embedder + dead vec0 connection is reported as vec0, not []."""
+        db = tmp_path / "novec.db"
+        s = SqliteStore(db, embedder=_HashingEmbedder(dim=64), auto_start_worker=False)
+        s.add(Document(id="proj/a", type="project", title="A", body="test"))
+        s._vec_conn = False  # same cached sentinel _vec_conn_lazy() sets on failure
+        with pytest.raises(ValidationError, match="vec0"):
+            s.find_duplicates(threshold=0.5)
+
+    def test_dedup_raises_when_nothing_embedded(self, tmp_path: Path) -> None:
+        """Enabled embedder, but no active document has a vector yet."""
+        db = tmp_path / "notyet.db"
+        s = SqliteStore(db, embedder=_HashingEmbedder(dim=64), auto_start_worker=False)
+        s.add(Document(id="proj/a", type="project", title="A", body="test"))
+        s.add(Document(id="proj/b", type="project", title="B", body="other"))
+        with pytest.raises(ValidationError, match="embedding"):
+            s.find_duplicates(threshold=0.5)
+
+    def test_dedup_no_pairs_returns_empty_when_embedded(self, store: SqliteStore) -> None:
+        """Legitimate empty result: vectors exist, but no pair is within threshold."""
+        assert store.find_duplicates(threshold=-1.0) == []
 
     def test_dedup_limit_respected(self, store: SqliteStore) -> None:
         """The limit cap on returned pairs works."""

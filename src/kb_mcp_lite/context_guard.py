@@ -24,12 +24,28 @@ def get_git_diff_summary(cwd: Path | str | None = None) -> dict[str, Any]:
         return {"files": [], "keywords": [], "raw_diff": ""}
 
     try:
-        # Get list of modified files (both staged and unstaged)
+        # Get list of modified files (both staged and unstaged).
+        #
+        # stdin=DEVNULL is load-bearing, not hygiene: under the stdio transport
+        # the server's stdin is the JSON-RPC pipe, with a read pending on it.
+        # git probes its stdin handle at startup (ntdll!NtQueryObject with
+        # ObjectNameInformation) and that name query blocks on a pipe that has
+        # a pending read — the tool then never returns. git diff never reads
+        # stdin, so NUL is safe. Details: .trellis/tasks/09-29-kbmcp-e2e-defects
+        # (R5).
+        #
+        # encoding="utf-8" is load-bearing too: the default text mode on Windows
+        # is cp932, git emits UTF-8, and a CJK diff crashes the capture reader
+        # thread — stdout comes back None and the except below swallows it into
+        # a silently empty result (R5b).
         res_files = subprocess.run(
             ["git", "diff", "HEAD", "--name-only"],
             cwd=str(work_dir),
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         files = [f.strip() for f in res_files.stdout.splitlines() if f.strip()]
@@ -38,8 +54,11 @@ def get_git_diff_summary(cwd: Path | str | None = None) -> dict[str, Any]:
         res_diff = subprocess.run(
             ["git", "diff", "HEAD", "-U1"],
             cwd=str(work_dir),
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         diff_text = res_diff.stdout

@@ -1,23 +1,3 @@
-# kb-mcp v0.9.0 Release Notes
-
-## What's changed
-
-- **Pure-SPA Admin Console (SSR removed)**:
-  - Removed the legacy Jinja2 server-rendered admin pages (`templates/admin/`, `static/admin.css`, `static/spa_router.js`) and all SSR routes (`/documents`, `/search`, `/links`, `/imports`, `/exports`, `/settings`, `/graph`, `/git`, `/scheduler`, `/types`).
-  - The root path `/` now always redirects to `/app`; the React SPA in `web/` (built output hosted at `static/app/`) is the sole admin UI.
-  - Dropped the `jinja2` runtime dependency; simplified setuptools package-data to `static/app/**` plus the new PEP 561 `py.typed` marker.
-  - Hardened CORS: the admin API now only allows localhost/127.0.0.1 origins instead of a wildcard.
-- **Math Rendering in Markdown (KaTeX)**:
-  - Doc detail view now renders LaTeX math via `remark-math` + `rehype-katex`: inline `$E = mc^2$` and block `$$...$$` formulas.
-  - KaTeX styles and fonts ship with the build; block formulas scroll horizontally instead of overflowing; currency like `$100` is not misinterpreted as math.
-- **Fixes**:
-  - Fixed a latent 500 on `/api/imports/upload`: `ImportReport` is now serialized via `model_dump(mode="json")`.
-  - `/api/graph` no longer uses raw SQL to fetch subgraph nodes (uses `store.get()`), fixing typing issues and removing a dead `url` field.
-- **Testing**:
-  - Former SSR page tests rewritten against the `/api/*` JSON surface; new tests for root redirect, graph API, and import/export serialization.
-
----
-
 # kb-mcp v0.7.0 Release Notes
 
 ## What's changed

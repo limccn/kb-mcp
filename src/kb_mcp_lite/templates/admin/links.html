@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}链接 · kb-mcp admin{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1>链接</h1>
+    <p>管理文档之间的类型化关系。</p>
+  </div>
+</header>
+
+<div class="panel-list">
+<div class="split-grid">
+  <section class="panel">
+    <div class="panel-head"><h2>创建链接</h2></div>
+    <form method="post" action="/links" class="form-stack">
+      <label>
+        <span>来源文档</span>
+        <select name="from_id">
+          {% for doc in docs %}
+          <option value="{{ doc.id }}">{{ doc.title }} · {{ doc.id }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>目标文档</span>
+        <select name="to_id">
+          {% for doc in docs %}
+          <option value="{{ doc.id }}">{{ doc.title }} · {{ doc.id }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>关系类型</span>
+        <input type="text" name="rel" value="relates-to" />
+      </label>
+      <button class="button primary" type="submit">创建链接</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>筛选链接</h2></div>
+    <form method="get" action="/links" class="form-stack">
+      <label>
+        <span>文档</span>
+        <select name="doc_id">
+          <option value="">所有文档</option>
+          {% for doc in docs %}
+          <option value="{{ doc.id }}" {% if filters.doc_id == doc.id %}selected{% endif %}>{{ doc.title }} · {{ doc.id }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>关系类型</span>
+        <select name="rel">
+          <option value="">所有关系</option>
+          {% for rel_name in rel_options %}
+          <option value="{{ rel_name }}" {% if filters.rel == rel_name %}selected{% endif %}>{{ rel_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button class="button secondary" type="submit">应用筛选</button>
+    </form>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>关系列表</h2>
+    <span class="meta-chip">{{ pagination.total }} 条链接</span>
+  </div>
+  <div class="list">
+    {% for link in links %}
+    <div class="list-row">
+      <div>
+        <div class="row-title">
+          {{ id_to_title.get(link.from_id, link.from_id) }} 
+          <span style="color: var(--muted-foreground); margin: 0 8px;">→</span> 
+          {{ id_to_title.get(link.to_id, link.to_id) }}
+        </div>
+        <div class="row-meta">
+          <span class="status-pill" style="padding: 2px 6px; font-size: 11px;">{{ link.rel }}</span>
+          <span style="margin-left: 8px;">{{ link.from_id }} → {{ link.to_id }} · {{ link.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
+        </div>
+      </div>
+      <form method="post" action="/links/delete">
+        <input type="hidden" name="from_id" value="{{ link.from_id }}" />
+        <input type="hidden" name="to_id" value="{{ link.to_id }}" />
+        <input type="hidden" name="rel" value="{{ link.rel }}" />
+        <button class="button ghost small-button" type="submit">删除</button>
+      </form>
+    </div>
+        {% else %}
+        <div class="empty-state">
+          <div class="empty-state-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          </div>
+          <div class="empty-state-title">暂无链接</div>
+          <p>在两个文档之间创建关系链接。</p>
+        </div>
+        {% endfor %}
+  </div>
+
+  {% if pagination.total_pages > 1 %}
+  <nav class="pagination" aria-label="链接分页">
+    {% set base_qs = [] %}
+    {% if filters.doc_id %}{% set base_qs = base_qs + [('doc_id', filters.doc_id)] %}{% endif %}
+    {% if filters.rel %}{% set base_qs = base_qs + [('rel', filters.rel)] %}{% endif %}
+    {% set base_qs = base_qs + [('per_page', pagination.per_page | string)] %}
+
+    <a class="button ghost small-button pagination-prev" {% if pagination.has_prev %}href="/links?{{ (base_qs + [('page', pagination.prev_page | string)]) | urlencode }}"{% else %}disabled{% endif %}>
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+      上一页
+    </a>
+
+    <div class="pagination-pages">
+      {% for p in range(1, pagination.total_pages + 1) %}
+      {% if p == pagination.page %}
+      <span class="pagination-page current">{{ p }}</span>
+      {% else %}
+      <a class="pagination-page" href="/links?{{ (base_qs + [('page', p | string)]) | urlencode }}">{{ p }}</a>
+      {% endif %}
+      {% endfor %}
+    </div>
+
+    <a class="button ghost small-button pagination-next" {% if pagination.has_next %}href="/links?{{ (base_qs + [('page', pagination.next_page | string)]) | urlencode }}"{% else %}disabled{% endif %}>
+      下一页
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+    </a>
+  </nav>
+  {% endif %}
+</section>
+</div>
+{% endblock %}

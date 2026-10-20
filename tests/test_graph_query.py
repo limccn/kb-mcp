@@ -1,8 +1,7 @@
 from pathlib import Path
-
-from kb_mcp_lite.graph_query import GraphQueryEngine, doctor_fix_hygiene
 from kb_mcp_lite.schema import Document
 from kb_mcp_lite.store.sqlite import SqliteStore
+from kb_mcp_lite.graph_query import GraphQueryEngine, doctor_fix_hygiene
 
 
 def test_multi_hop_path_and_query(tmp_path: Path):

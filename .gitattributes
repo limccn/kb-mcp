@@ -1,0 +1,24 @@
+# 行尾统一策略 (kb-mcp)
+#
+# 仓库内一律以 LF 存储，检出时按平台转换：
+#   - Windows 工作区          -> CRLF（依赖 core.autocrlf=true，已在本仓库 .git/config 显式设定）
+#   - GitHub / ubuntu-latest CI -> LF
+#
+# 说明：索引中现有文本文件已是 LF，新增本文件不会触发 renormalize 提交。
+* text=auto
+
+# ---- 必须 CRLF：LF 会导致 cmd.exe 解析异常 ----
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+
+# ---- 必须 LF：CRLF 会让 Unix 报 "bad interpreter" ----
+*.sh           text eol=lf
+examples/*.py  text eol=lf
+
+# ---- 二进制资产：禁用行尾转换与文本 diff ----
+*.exe    binary
+*.ico    binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.otf    binary

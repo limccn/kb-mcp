@@ -31,10 +31,10 @@ import logging
 import os
 import sys
 import time
-from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from types import TracebackType
+from collections.abc import Iterator
 
 from kb_mcp_lite.schema import KbMcpError
 

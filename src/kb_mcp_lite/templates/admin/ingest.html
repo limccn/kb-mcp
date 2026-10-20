@@ -1,0 +1,895 @@
+{% extends "base.html" %}
+{% block title %}转换 · kb-mcp admin{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1>转换 / Ingest</h1>
+    <p>上传文件或文件夹，转换后入库到当前 vault。</p>
+  </div>
+  <button type="button" class="button secondary" id="refresh-btn" onclick="refreshAll()">
+    <span class="button-text">刷新</span>
+    <span class="button-spinner"></span>
+  </button>
+</header>
+
+<div id="conn-banner" class="alert error" style="display: none;">连接中断，重试中…</div>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>选择文件</h2>
+    <span class="ingest-note">选入待处理列表后，再点「开始处理」</span>
+  </div>
+  <div class="ingest-entry">
+    <label class="button secondary" for="file-input">上传文件</label>
+    <input type="file" id="file-input" multiple hidden />
+    <label class="button secondary" for="dir-input">上传文件夹</label>
+    <input type="file" id="dir-input" webkitdirectory multiple hidden />
+    <button type="button" class="button primary" id="start-btn" onclick="startProcessing()" disabled>
+      <span class="button-text">开始处理</span>
+      <span class="button-spinner"></span>
+    </button>
+    <button type="button" class="button secondary" id="clear-btn" onclick="clearRows()">清空列表</button>
+  </div>
+  <p class="ingest-hint" id="limits-hint">限额加载中…</p>
+  <p class="ingest-hint" id="precheck-hint" style="display: none;"></p>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>近期任务</h2>
+    <span class="ingest-note" id="job-meta">无任务</span>
+  </div>
+  <div class="ingest-entry">
+    <select id="job-select" class="vault-select"><option value="">无任务</option></select>
+  </div>
+  <div id="job-error" class="alert error" style="display: none;"></div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>文件列表</h2>
+    <span class="ingest-note">转换阶段的「未变化」不是错误；zip 成员在转换开始后出现</span>
+  </div>
+  <div class="ingest-grid ingest-head">
+    <div class="ingest-col">路径</div>
+    <div class="ingest-col">大小</div>
+    <div class="ingest-col">上传</div>
+    <div class="ingest-col">转换</div>
+    <div class="ingest-col">入库</div>
+    <div class="ingest-col">原因</div>
+    <div class="ingest-col">操作</div>
+  </div>
+  <div id="rows">
+    <div class="empty-state"><div class="empty-state-title">尚未选择文件</div></div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>批次进度</h2>
+    <span class="ingest-note">入库阶段按批次推进；失败原因是完成后的事后回填</span>
+  </div>
+  <div class="stats-grid ingest-stats">
+    <article class="stat-panel"><span>已上传</span><strong id="count-uploaded">0</strong></article>
+    <article class="stat-panel"><span>已转换</span><strong id="count-converted">0</strong></article>
+    <article class="stat-panel"><span>失败</span><strong id="count-failed">0</strong></article>
+    <article class="stat-panel"><span>跳过</span><strong id="count-skipped">0</strong></article>
+    <article class="stat-panel"><span>新增</span><strong id="count-inserted">0</strong></article>
+    <article class="stat-panel"><span>更新</span><strong id="count-updated">0</strong></article>
+    <article class="stat-panel"><span>入库错误</span><strong id="count-import-errors">0</strong></article>
+  </div>
+  <pre id="log-tail" class="ingest-log"></pre>
+</section>
+
+<style>
+  .ingest-entry { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
+  .ingest-entry label.button { cursor: pointer; }
+  .ingest-hint { color: var(--muted-foreground); font-size: 13px; margin: var(--space-3) 0 0; }
+  .ingest-note { color: var(--muted-foreground); font-size: 12px; }
+  .ingest-stats { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
+  .ingest-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 2.4fr) 90px 110px 110px 150px minmax(0, 1.5fr) 90px;
+    gap: var(--space-2) var(--space-3);
+    align-items: center;
+    padding: 8px 0;
+  }
+  .ingest-head {
+    color: var(--muted-foreground);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: var(--space-2);
+  }
+  .ingest-row { border-bottom: 1px solid var(--border); font-size: 13px; }
+  .ingest-row:last-child { border-bottom: none; }
+  .ingest-member { background: var(--muted); }
+  .ingest-member .ingest-rel { padding-left: 20px; }
+  .ingest-rel { min-width: 0; overflow-wrap: anywhere; }
+  .ingest-reason { font-size: 12px; color: var(--muted-foreground); overflow-wrap: anywhere; }
+  .ingest-pct { display: flex; align-items: center; gap: 8px; }
+  .ingest-pct .bar-track { flex: 1; min-width: 48px; }
+  .ingest-actions { display: flex; justify-content: flex-end; }
+  .ingest-section-title {
+    color: var(--muted-foreground);
+    font-size: 12px;
+    font-weight: 600;
+    margin: var(--space-3) 0 var(--space-1);
+  }
+  .ingest-log {
+    margin: 0;
+    padding: 12px;
+    max-height: 260px;
+    overflow: auto;
+    background: var(--muted);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+</style>
+
+<script>
+/* ── C3 ingest page: pick -> review -> start -> watch ──────────────────
+   Zero dependencies, zero build (no package.json, no bundler). Everything
+   on screen comes from the server's API payloads; the page never invents
+   per-file progress -- the import stage stays batch-level and every
+   backfilled outcome is marked "(事后回填)" (parent prd D6). */
+(function initIngestPage() {
+  'use strict';
+
+  const POLL_MS = 1000;
+
+  const state = {
+    limits: null,        // GET /api/ingest/limits (precheck only; server decides)
+    rows: [],            // local pending list; upload states live here
+    batchId: null,       // the batch the current run uploaded into
+    jobId: null,         // the job being watched
+    job: null,           // its full JSON snapshot (the rendering authority)
+    busy: false,         // an upload/start round is running
+    stopUploads: false,  // a batch-level 409 stopped the remaining queue
+    needStart: false,    // uploads landed but the start call failed; retry start
+    pollTimer: null,
+    fetchFailures: 0
+  };
+
+  // ── helpers ──────────────────────────────────────────────────────────
+
+  function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+    });
+  }
+
+  function fmtBytes(n) {
+    if (n == null || isNaN(n)) return '—';
+    if (n < 1024) return n + ' B';
+    const units = ['KiB', 'MiB', 'GiB'];
+    let value = n;
+    let i = -1;
+    do { value = value / 1024; i += 1; } while (value >= 1024 && i < units.length - 1);
+    return value.toFixed(1) + ' ' + units[i];
+  }
+
+  function encodeRel(rel) {
+    return String(rel).split('/').map(encodeURIComponent).join('/');
+  }
+
+  function pill(text, kind) {
+    const cls = kind === 'ok' ? ' status-ok' : kind === 'bad' ? ' status-bad' : '';
+    return '<span class="status-pill' + cls + '">' + esc(text) + '</span>';
+  }
+
+  function setText(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  }
+
+  function findRow(rel) {
+    return state.rows.find(function (row) { return row.rel === rel; }) || null;
+  }
+
+  function isTerminal(jobState) {
+    return jobState === 'done' || jobState === 'failed';
+  }
+
+  function jobActive() {
+    return !!state.job && !isTerminal(state.job.state);
+  }
+
+  function jobStateWord(jobState) {
+    return {
+      queued: '排队中',
+      converting: '转换中',
+      importing: '入库中',
+      done: '已完成',
+      failed: '失败'
+    }[jobState] || String(jobState || '');
+  }
+
+  // ── limits (precheck; the server stays authoritative) ────────────────
+
+  function loadLimits() {
+    return fetch('/api/ingest/limits')
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (data && data.limits) {
+          state.limits = data.limits;
+          setText('limits-hint',
+            '限额（服务端为准）：单文件 ≤ ' + fmtBytes(state.limits.max_file_bytes)
+            + ' · 最多 ' + state.limits.max_files + ' 个文件 · 批次总量 ≤ ' + fmtBytes(state.limits.max_total_bytes)
+            + '。前端预检只是提前告知，不取代服务端判定。');
+          updatePrecheckHint();
+        }
+      })
+      .catch(function () {
+        setText('limits-hint', '限额加载失败；服务端仍会判定。');
+      });
+  }
+
+  function updatePrecheckHint() {
+    const el = document.getElementById('precheck-hint');
+    if (!el) return;
+    if (!state.limits) { el.style.display = 'none'; return; }
+    const total = state.rows.reduce(function (sum, row) { return sum + (row.size || 0); }, 0);
+    const notes = [];
+    if (state.rows.length > state.limits.max_files) {
+      notes.push('列表有 ' + state.rows.length + ' 个文件，超过批次上限 ' + state.limits.max_files
+        + '，超出部分会被服务端拒绝');
+    }
+    if (total > state.limits.max_total_bytes) {
+      notes.push('列表总量 ' + fmtBytes(total) + ' 超过批次上限 ' + fmtBytes(state.limits.max_total_bytes)
+        + '，服务端会在中途拒绝');
+    }
+    if (notes.length) {
+      el.textContent = '预检提示：' + notes.join('；');
+      el.style.display = '';
+    } else {
+      el.textContent = '';
+      el.style.display = 'none';
+    }
+  }
+
+  // ── local pending list ───────────────────────────────────────────────
+
+  function folderRel(file) {
+    // Drop the top-level folder: `kb ingest DIR` treats DIR as the root, so
+    // the page must too. webkitRelativePath is "top/sub/a.txt" -> "sub/a.txt".
+    const raw = file.webkitRelativePath || file.name;
+    const parts = raw.split('/');
+    const stripped = parts.slice(1).join('/');
+    return stripped || parts[parts.length - 1] || '';
+  }
+
+  function initialUpload(file) {
+    if (state.limits && file.size > state.limits.max_file_bytes) {
+      return {
+        state: 'rejected',
+        pct: 0,
+        error: '前端预检：超出单文件限额 ' + fmtBytes(state.limits.max_file_bytes) + '（服务端仍会拒绝）'
+      };
+    }
+    return { state: 'waiting', pct: 0, error: null };
+  }
+
+  function addRows(fileList, source) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    let added = 0;
+    files.forEach(function (file) {
+      const rel = source === 'folder' ? folderRel(file) : file.name;
+      if (!rel) return;
+      let row = findRow(rel);
+      if (row) {
+        row.file = file;
+        row.size = file.size;
+        row.source = source;
+        row.upload = initialUpload(file);
+        row.serverSeen = false;
+        row.batchId = null;
+      } else {
+        row = {
+          rel: rel,
+          size: file.size,
+          source: source,
+          file: file,
+          upload: initialUpload(file),
+          serverSeen: false,
+          batchId: null
+        };
+        state.rows.push(row);
+      }
+      added += 1;
+    });
+    renderRows();
+    updateButtons();
+    updatePrecheckHint();
+    if (added) showToast('success', '已加入待处理列表', added + ' 个文件；点「开始处理」运行');
+  }
+
+  // ── rendering ────────────────────────────────────────────────────────
+
+  function uploadCell(row) {
+    const up = row.upload || {};
+    if (up.state === 'uploading') {
+      const pct = Math.max(0, Math.min(100, Math.round(up.pct || 0)));
+      return '<div class="ingest-pct"><div class="bar-track"><div class="bar-fill" style="width:'
+        + pct + '%"></div></div><span class="ingest-note">' + pct + '%</span></div>';
+    }
+    if (up.state === 'done') return pill('已完成', 'ok');
+    if (up.state === 'rejected') return pill('已拒绝', 'bad');
+    if (up.state === 'refused') return pill('未上传', 'bad');
+    if (up.state === 'error') return pill('失败', 'bad');
+    return pill('待上传');
+  }
+
+  function convertCell(convert, jobState) {
+    const st = convert && convert.state;
+    if (st === 'pending' || !st) return pill(jobState === 'converting' ? '转换中…' : '等待');
+    if (st === 'ok') return pill('成功', 'ok');
+    if (st === 'failed') return pill('失败', 'bad');
+    if (st === 'skipped') return pill('跳过');
+    if (st === 'unchanged') return pill('未变化');  // incremental, not an error
+    if (st === 'pruned') return pill('已清理');
+    return pill(String(st));
+  }
+
+  function importCell(imp, jobState) {
+    const i = imp || {};
+    if (i.state === 'ok') return pill(i.posthoc ? '已入库（事后回填）' : '已入库', 'ok');
+    if (i.state === 'failed') return pill(i.posthoc ? '失败（事后回填）' : '失败', 'bad');
+    return isTerminal(jobState) ? '<span class="ingest-note">—</span>' : pill('等待');
+  }
+
+  function localRowHtml(row) {
+    const up = row.upload || {};
+    const blocked = up.state === 'rejected' || up.state === 'refused' || up.state === 'error';
+    const removeDisabled = state.busy || up.state === 'uploading';
+    return ''
+      + '<div class="ingest-grid ingest-row">'
+      +   '<div class="ingest-rel" title="' + esc(row.rel) + '">' + esc(row.rel)
+      +     '<div class="ingest-note">' + (row.source === 'folder' ? '文件夹' : '文件') + '</div></div>'
+      +   '<div>' + fmtBytes(row.size) + '</div>'
+      +   '<div>' + uploadCell(row) + '</div>'
+      +   '<div>' + (blocked ? '<span class="ingest-note">—</span>' : pill('待转换')) + '</div>'
+      +   '<div><span class="ingest-note">—</span></div>'
+      +   '<div class="ingest-reason">'
+      +     (up.error ? '<div>' + esc(up.error) + '</div>' : '<span class="ingest-note">—</span>')
+      +   '</div>'
+      +   '<div class="ingest-actions"><button type="button" class="button secondary small-button" data-rel="'
+      +     esc(row.rel) + '"' + (removeDisabled ? ' disabled' : '') + '>移除</button></div>'
+      + '</div>';
+  }
+
+  function serverRowHtml(f, isMember, jobState) {
+    const convert = f.convert || {};
+    const imp = f.import || {};
+    const local = findRow(f.rel);
+    const sizeCell = local && local.size != null
+      ? fmtBytes(local.size)
+      : '<span class="ingest-note">—</span>';
+    const reasonParts = [];
+    if (convert.reason) reasonParts.push('<div>' + esc(convert.reason) + '</div>');
+    if (imp.error) reasonParts.push('<div>' + esc(imp.error) + '</div>');
+    return ''
+      + '<div class="ingest-grid ingest-row' + (isMember ? ' ingest-member' : '') + '">'
+      +   '<div class="ingest-rel" title="' + esc(f.rel) + '">' + esc(f.rel) + '</div>'
+      +   '<div>' + sizeCell + '</div>'
+      +   '<div>' + pill('已完成', 'ok') + '</div>'
+      +   '<div>' + convertCell(convert, jobState) + '</div>'
+      +   '<div>' + importCell(imp, jobState) + '</div>'
+      +   '<div class="ingest-reason">'
+      +     (reasonParts.length ? reasonParts.join('') : '<span class="ingest-note">—</span>')
+      +   '</div>'
+      +   '<div class="ingest-actions"></div>'
+      + '</div>';
+  }
+
+  function packFor(rel, files) {
+    // The staged .zip that owns `rel` by longest path prefix (C2's rule; zip
+    // members carry the archive name in their rel).
+    let best = null;
+    for (let i = 0; i < files.length; i += 1) {
+      const f = files[i];
+      if (!f.rel.toLowerCase().endsWith('.zip')) continue;
+      if (f.rel === rel) continue;
+      if (rel.indexOf(f.rel + '/') === 0 && (!best || f.rel.length > best.rel.length)) best = f;
+    }
+    return best;
+  }
+
+  function renderServerFiles(job, files, parts) {
+    const rendered = {};
+    files.forEach(function (f) {
+      if (rendered[f.rel]) return;
+      const pack = packFor(f.rel, files);
+      if (pack && !rendered[pack.rel]) {
+        parts.push(serverRowHtml(pack, false, job.state));
+        rendered[pack.rel] = true;
+      }
+      parts.push(serverRowHtml(f, !!pack, job.state));
+      rendered[f.rel] = true;
+    });
+  }
+
+  function representedByJob(row, job) {
+    // Only a staged upload is inside the job snapshot. Server-rejected rows
+    // own no file and are never in `job.files` -- they must keep showing
+    // (prd: "服务端拒绝的行也能显示"), so the tail section owns them.
+    return !!job && row.upload.state === 'done'
+      && row.serverSeen === true && row.batchId === job.batch_id;
+  }
+
+  function renderRows() {
+    const container = document.getElementById('rows');
+    if (!container) return;
+    const job = state.job;
+    const parts = [];
+    if (job) renderServerFiles(job, job.files || [], parts);
+    const localOnly = state.rows.filter(function (row) { return !representedByJob(row, job); });
+    if (localOnly.length) {
+      if (job) parts.push('<div class="ingest-section-title">未进入转换</div>');
+      localOnly.forEach(function (row) { parts.push(localRowHtml(row)); });
+    }
+    container.innerHTML = parts.length
+      ? parts.join('')
+      : '<div class="empty-state"><div class="empty-state-title">尚未选择文件</div></div>';
+  }
+
+  function renderJobPanels() {
+    const job = state.job;
+    const counts = {
+      uploaded: 0, converted: 0, failed: 0, skipped: 0,
+      inserted: 0, updated: 0, import_errors: 0
+    };
+    if (job && job.counts) {
+      Object.keys(counts).forEach(function (key) {
+        if (job.counts[key] != null) counts[key] = job.counts[key];
+      });
+    }
+    setText('count-uploaded', counts.uploaded);
+    setText('count-converted', counts.converted);
+    setText('count-failed', counts.failed);
+    setText('count-skipped', counts.skipped);
+    setText('count-inserted', counts.inserted);
+    setText('count-updated', counts.updated);
+    setText('count-import-errors', counts.import_errors);
+
+    const meta = document.getElementById('job-meta');
+    if (meta) {
+      if (job) {
+        const started = job.started_at ? ' · 开始 ' + String(job.started_at).slice(11, 19) + ' UTC' : '';
+        meta.textContent = '批次 ' + String(job.batch_id).slice(0, 8)
+          + ' · vault ' + job.vault + ' · ' + jobStateWord(job.state) + started;
+      } else {
+        meta.textContent = '无任务';
+      }
+    }
+
+    const err = document.getElementById('job-error');
+    if (err) {
+      if (job && job.state === 'failed' && job.error) {
+        err.textContent = job.error;
+        err.style.display = '';
+      } else {
+        err.textContent = '';
+        err.style.display = 'none';
+      }
+    }
+
+    const log = document.getElementById('log-tail');
+    if (log) {
+      log.textContent = job && job.log_tail ? job.log_tail.join('\n') : '';
+      log.scrollTop = log.scrollHeight;
+    }
+  }
+
+  function renderJob() {
+    renderJobPanels();
+    renderRows();
+    updateButtons();
+  }
+
+  function updateButtons() {
+    const waiting = state.rows.some(function (row) { return row.upload.state === 'waiting'; });
+    const startBtn = document.getElementById('start-btn');
+    if (startBtn) {
+      startBtn.disabled = state.busy || jobActive() || !(waiting || state.needStart);
+      startBtn.classList.toggle('loading', state.busy);
+    }
+    const clearBtn = document.getElementById('clear-btn');
+    if (clearBtn) clearBtn.disabled = state.busy || jobActive();
+  }
+
+  // ── upload + start ───────────────────────────────────────────────────
+
+  function uploadOne(row) {
+    return new Promise(function (resolve) {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/ingest/batches/' + encodeURIComponent(state.batchId) + '/files');
+      row.upload = { state: 'uploading', pct: 0, error: null };
+      renderRows();
+
+      xhr.upload.onprogress = function (event) {
+        if (event.lengthComputable && event.total > 0) {
+          row.upload.pct = Math.min(100, Math.round((event.loaded / event.total) * 100));
+          renderRows();
+        }
+      };
+
+      xhr.onload = function () {
+        let data = {};
+        try { data = JSON.parse(xhr.responseText); } catch (err) { data = {}; }
+        if (xhr.status === 201 && data.ok) {
+          row.upload = { state: 'done', pct: 100, error: null };
+          row.serverSeen = true;
+          row.batchId = state.batchId;
+        } else if (xhr.status === 200 && data.file) {
+          // Server-side single-file rejection: a rejected row, batch continues.
+          row.upload = { state: 'rejected', pct: 0, error: data.file.error || '被服务端拒绝' };
+          row.serverSeen = true;
+          row.batchId = state.batchId;
+        } else if (xhr.status === 409 && data.job_id) {
+          // The C2 job guard (a job is reading the batch): normal competition,
+          // not an exception -- name it and switch to the running job.
+          row.upload = { state: 'error', pct: 0, error: '任务运行中，文件变更被拒：' + (data.error || '') };
+          state.stopUploads = true;
+          showToast('error', '任务运行中', '该批次的任务尚未结束，已切换到任务进度');
+          state.jobId = data.job_id;
+          openJob(data.job_id);
+        } else if (xhr.status === 409) {
+          row.upload = {
+            state: 'refused',
+            pct: 0,
+            error: '批次限额（' + (data.limit || 'limit') + '：上限 ' + data.limit_value
+              + '，实际 ' + data.actual + '）' + (data.error ? '：' + data.error : '')
+          };
+          state.stopUploads = true;
+          showToast('error', '批次限额已到', data.error || '');
+        } else if (xhr.status === 400) {
+          row.upload = { state: 'error', pct: 0, error: data.error || '请求被拒绝（400）' };
+        } else if (xhr.status === 404) {
+          row.upload = { state: 'error', pct: 0, error: data.error || '批次不存在（404）' };
+        } else {
+          row.upload = { state: 'error', pct: 0, error: data.error || ('HTTP ' + xhr.status) };
+        }
+        renderRows();
+        resolve();
+      };
+      xhr.onerror = function () {
+        row.upload = { state: 'error', pct: 0, error: '网络错误（连接中断）' };
+        renderRows();
+        resolve();
+      };
+
+      const form = new FormData();
+      form.append('file', row.file, row.rel.split('/').pop());
+      form.append('rel', row.rel);
+      form.append('source', row.source);
+      xhr.send(form);
+    });
+  }
+
+  async function startJob() {
+    let res;
+    let data;
+    try {
+      res = await fetch('/api/ingest/batches/' + encodeURIComponent(state.batchId) + '/start', { method: 'POST' });
+      data = await res.json().catch(function () { return {}; });
+    } catch (err) {
+      state.needStart = true;
+      updateButtons();
+      showToast('error', '启动失败', err.message || '网络错误');
+      return;
+    }
+    if (res.status === 202 && data.ok) {
+      state.needStart = false;
+      state.jobId = data.job_id;
+      await openJob(data.job_id);
+      return;
+    }
+    if (res.status === 409 && data.job_id) {
+      // The batch already has a running job (a rerun race): show it instead.
+      state.needStart = false;
+      showToast('error', '批次已有运行中的任务', '切换到任务 ' + String(data.job_id).slice(0, 8));
+      state.jobId = data.job_id;
+      await openJob(data.job_id);
+      return;
+    }
+    if (res.status === 409) {
+      state.needStart = false;
+      showToast('error', '无法开始', data.error || '没有可转换的文件');
+      return;
+    }
+    state.needStart = true;
+    showToast('error', '启动失败', data.error || ('HTTP ' + res.status));
+  }
+
+  async function startProcessing() {
+    if (state.busy || jobActive()) return;
+    if (state.needStart && state.batchId) {
+      state.busy = true;
+      updateButtons();
+      try { await startJob(); } finally { state.busy = false; updateButtons(); }
+      return;
+    }
+    const pending = state.rows.filter(function (row) { return row.upload.state === 'waiting'; });
+    if (!pending.length) {
+      showToast('error', '没有待上传的文件', '先选择文件，或移除后再重新加入');
+      return;
+    }
+    state.busy = true;
+    state.stopUploads = false;
+    updateButtons();
+    try {
+      const res = await fetch('/api/ingest/batches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}'
+      });
+      const data = await res.json().catch(function () { return {}; });
+      if (res.status !== 201 || !data.ok) {
+        showToast('error', '创建批次失败', data.error || ('HTTP ' + res.status));
+        return;
+      }
+      state.batchId = data.batch_id;
+      setText('job-meta', '批次 ' + String(data.batch_id).slice(0, 8) + ' · vault ' + data.vault);
+
+      for (let i = 0; i < pending.length; i += 1) {
+        if (state.stopUploads) {
+          pending[i].upload = { state: 'refused', pct: 0, error: '未上传（批次限额）' };
+          continue;
+        }
+        await uploadOne(pending[i]);
+      }
+
+      const staged = pending.some(function (row) { return row.upload.state === 'done'; });
+      if (staged) {
+        await startJob();
+      } else {
+        showToast('error', '没有成功上传的文件', '请检查超限或被拒的文件');
+      }
+    } catch (err) {
+      showToast('error', '上传失败', err.message || String(err));
+    } finally {
+      state.busy = false;
+      renderRows();
+      updateButtons();
+    }
+  }
+
+  // ── job polling (chain-linked setTimeout: never setInterval) ─────────
+
+  function stopPolling() {
+    if (state.pollTimer) {
+      clearTimeout(state.pollTimer);
+      state.pollTimer = null;
+    }
+  }
+
+  function scheduleNext() {
+    stopPolling();
+    state.pollTimer = setTimeout(pollOnce, POLL_MS);
+  }
+
+  function showConnBanner() {
+    const el = document.getElementById('conn-banner');
+    if (el) el.style.display = '';
+  }
+
+  function hideConnBanner() {
+    const el = document.getElementById('conn-banner');
+    if (el) el.style.display = 'none';
+  }
+
+  async function pollOnce() {
+    const jobId = state.jobId;
+    if (!jobId) return;
+    try {
+      const res = await fetch('/api/ingest/jobs/' + encodeURIComponent(jobId));
+      if (res.status === 404) {
+        showToast('error', '任务不存在', '可能已被清理');
+        stopPolling();
+        state.jobId = null;
+        state.job = null;
+        renderJob();
+        return;
+      }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const job = await res.json();
+      state.fetchFailures = 0;
+      hideConnBanner();
+      state.job = job;
+      renderJob();
+      if (isTerminal(job.state)) {
+        stopPolling();
+        refreshJobs();
+      } else {
+        scheduleNext();
+      }
+    } catch (err) {
+      state.fetchFailures += 1;
+      if (state.fetchFailures >= 3) showConnBanner();
+      scheduleNext();
+    }
+  }
+
+  async function openJob(jobId) {
+    stopPolling();
+    state.jobId = jobId || null;
+    const sel = document.getElementById('job-select');
+    if (sel && jobId && sel.value !== jobId) sel.value = jobId;
+    if (!jobId) {
+      state.job = null;
+      renderJob();
+      return;
+    }
+    await pollOnce();
+    refreshJobs();  // make sure the job being watched is an option in the select
+  }
+
+  // ── job list (restore on load + the select) ──────────────────────────
+
+  async function refreshJobs() {
+    try {
+      const res = await fetch('/api/ingest/jobs');
+      const data = await res.json().catch(function () { return {}; });
+      const jobs = (data && data.jobs) || [];
+      const sel = document.getElementById('job-select');
+      if (!sel) return;
+      const current = state.jobId;
+      sel.innerHTML = '';
+      if (!jobs.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = '无任务';
+        sel.appendChild(opt);
+        return;
+      }
+      jobs.forEach(function (job) {
+        const opt = document.createElement('option');
+        opt.value = job.job_id;
+        const started = job.started_at ? ' · ' + String(job.started_at).slice(11, 19) + ' UTC' : '';
+        opt.textContent = String(job.job_id).slice(0, 8) + ' · ' + jobStateWord(job.state)
+          + ' · ' + job.vault + started;
+        sel.appendChild(opt);
+      });
+      const stillThere = current && jobs.some(function (job) { return job.job_id === current; });
+      sel.value = stillThere ? current : jobs[0].job_id;
+    } catch (err) {
+      // Non-fatal: the connection banner covers a dead server.
+    }
+  }
+
+  // ── row removal + list clearing ──────────────────────────────────────
+
+  function dropRow(rel) {
+    state.rows = state.rows.filter(function (row) { return row.rel !== rel; });
+    renderRows();
+    updateButtons();
+    updatePrecheckHint();
+  }
+
+  async function removeRow(rel) {
+    const row = findRow(rel);
+    if (!row || state.busy || row.upload.state === 'uploading') return;
+    if (!state.batchId || !row.serverSeen) {
+      dropRow(rel);  // purely local: nothing server-side to clean up
+      return;
+    }
+    try {
+      const res = await fetch(
+        '/api/ingest/batches/' + encodeURIComponent(state.batchId) + '/files/' + encodeRel(row.rel),
+        { method: 'DELETE' }
+      );
+      const data = await res.json().catch(function () { return {}; });
+      if (res.status === 200 && data.ok) {
+        dropRow(rel);
+        showToast('success', '已移除', row.rel);
+        return;
+      }
+      if (res.status === 404) {
+        // The server has no such row (never landed, or already gone).
+        dropRow(rel);
+        return;
+      }
+      // 409 (a job is reading the batch) and friends: keep the row, name why.
+      showToast('error', '无法移除', data.error || ('HTTP ' + res.status));
+    } catch (err) {
+      showToast('error', '无法移除', err.message || '网络错误');
+    }
+  }
+
+  function clearRows() {
+    if (state.busy || jobActive()) return;
+    state.rows = [];
+    state.needStart = false;
+    renderRows();
+    updateButtons();
+    updatePrecheckHint();
+  }
+
+  // ── refresh + wiring ─────────────────────────────────────────────────
+
+  async function refreshAll() {
+    if (state.busy) return;
+    const btn = document.getElementById('refresh-btn');
+    if (btn) btn.classList.add('loading');
+    try {
+      await loadLimits();
+      await refreshJobs();
+      const sel = document.getElementById('job-select');
+      const target = state.jobId || (sel ? sel.value : '');
+      if (target) {
+        await openJob(target);
+      } else {
+        renderJob();
+      }
+    } finally {
+      if (btn) btn.classList.remove('loading');
+    }
+  }
+
+  function bindEvents() {
+    const fileInput = document.getElementById('file-input');
+    if (fileInput) {
+      fileInput.addEventListener('change', function () {
+        addRows(fileInput.files, 'upload');
+        fileInput.value = '';
+      });
+    }
+    const dirInput = document.getElementById('dir-input');
+    if (dirInput) {
+      dirInput.addEventListener('change', function () {
+        addRows(dirInput.files, 'folder');
+        dirInput.value = '';
+      });
+    }
+    const sel = document.getElementById('job-select');
+    if (sel) {
+      sel.addEventListener('change', function () {
+        if (sel.value) {
+          openJob(sel.value);
+        } else {
+          stopPolling();
+          state.jobId = null;
+          state.job = null;
+          renderJob();
+        }
+      });
+    }
+    const rowsBox = document.getElementById('rows');
+    if (rowsBox) {
+      rowsBox.addEventListener('click', function (event) {
+        const btn = event.target.closest('button[data-rel]');
+        if (btn) removeRow(btn.dataset.rel);
+      });
+    }
+  }
+
+  async function init() {
+    bindEvents();
+    await loadLimits();
+    await refreshJobs();          // restore: recent jobs reappear after reload
+    const sel = document.getElementById('job-select');
+    if (sel && sel.value) {
+      await openJob(sel.value);   // paints now; polls on while non-terminal
+    } else {
+      renderJob();
+    }
+  }
+
+  window.startProcessing = startProcessing;
+  window.clearRows = clearRows;
+  window.refreshAll = refreshAll;
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+{% endblock %}

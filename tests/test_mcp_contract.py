@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kb_mcp_lite.mcp_server import _DOC_TEMPLATES, _HELP_DOCS, KbSearchInput
+from kb_mcp_lite.mcp_server import KbSearchInput, _DOC_TEMPLATES, _HELP_DOCS
 from kb_mcp_lite.schema import default_registry
 
 

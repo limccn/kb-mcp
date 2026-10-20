@@ -1,11 +1,9 @@
-from pathlib import Path
-
 import pytest
-
-from kb_mcp_lite.mcp_server import _make_server
+from pathlib import Path
 from kb_mcp_lite.schema import Document
-from kb_mcp_lite.store.sqlite import SqliteStore
 from kb_mcp_lite.vault import VaultManager
+from kb_mcp_lite.store.sqlite import SqliteStore
+from kb_mcp_lite.mcp_server import _make_server
 
 
 def test_multi_vault_mcp_routing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

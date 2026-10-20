@@ -31,12 +31,12 @@ from typing import TYPE_CHECKING, Any, TypedDict
 import frontmatter
 
 from kb_mcp_lite.schema import (
-    _TYPE_PREFIX,
     Document,
     DocumentType,
     ImportReport,
     Link,
     ValidationError,
+    _TYPE_PREFIX,
     make_id,
     slugify,
 )
@@ -433,7 +433,7 @@ def import_dir(store: Store, dir: Path, *, dry_run: bool = False) -> ImportRepor
 
             except ValidationError as e:
                 errors.append(f"{path}: {e}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — surface any parse error per-file
                 errors.append(f"{path}: {type(e).__name__}: {e}")
 
     if dry_run or not docs:
@@ -471,7 +471,7 @@ def import_dir(store: Store, dir: Path, *, dry_run: bool = False) -> ImportRepor
         resolved_to = old_id_map.get(to_id, to_id)
         try:
             store.link(from_id, resolved_to, rel=rel)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — surface per-link error
             link_errors.append(f"{source_path}: link {from_id} -> {resolved_to} ({rel}): {e}")
 
     return ImportReport(
@@ -728,7 +728,7 @@ def _same_export_content(on_disk: str, rendered: str) -> bool:
     try:
         fm_disk, body_disk = parse_frontmatter(on_disk)
         fm_rendered, body_rendered = parse_frontmatter(rendered)
-    except Exception:
+    except Exception:  # noqa: BLE001 — unparseable file counts as byte-diff
         return on_disk == rendered
     for key in _VOLATILE_FRONTMATTER_KEYS:
         fm_disk.pop(key, None)  # type: ignore[misc]
@@ -739,10 +739,10 @@ def _same_export_content(on_disk: str, rendered: str) -> bool:
 __all__ = [
     "Frontmatter",
     "PendingExport",
-    "doc_from_frontmatter",
-    "export_dir",
-    "import_dir",
     "parse_frontmatter",
-    "pending_export",
     "render_document",
+    "doc_from_frontmatter",
+    "import_dir",
+    "export_dir",
+    "pending_export",
 ]

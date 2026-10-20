@@ -55,7 +55,7 @@ def _try_load_vec0(conn: sqlite3.Connection) -> None:
         import sqlite_vec
 
         sqlite_vec.load(conn)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logging.getLogger("kb_mcp_lite").debug("vec0 not loaded: %s", e)
 
 
@@ -102,6 +102,6 @@ def make_sqlite_connection(
     try:
         conn.enable_load_extension(True)
         _try_load_vec0(conn)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return conn

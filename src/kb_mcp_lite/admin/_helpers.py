@@ -7,6 +7,7 @@ from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -82,14 +83,10 @@ BUILTIN_TYPES: list[dict[str, Any]] = [
 ]
 
 DOC_TYPES = [t["name"] for t in BUILTIN_TYPES]
+SEARCH_MODES = ["lexical", "fuzzy", "semantic", "hybrid"]
 
 
-def get_custom_types(store: SqliteStore | None = None) -> list[dict[str, Any]]:
-    if store is not None:
-        db_types = store.list_custom_types()
-        if db_types:
-            return db_types
-
+def get_custom_types() -> list[dict[str, Any]]:
     from kb_mcp_lite.config import load_config
 
     cfg = load_config()
@@ -99,29 +96,8 @@ def get_custom_types(store: SqliteStore | None = None) -> list[dict[str, Any]]:
     return []
 
 
-def save_custom_types(custom_types: list[dict[str, Any]], store: SqliteStore | None = None) -> None:
-    if store is not None:
-        # Get existing custom types to detect deletions if a full list is provided
-        existing = {t["name"] for t in store.list_custom_types()}
-        current_names = {t["name"] for t in custom_types if "name" in t}
-        # Delete removed
-        for name in existing - current_names:
-            store.delete_custom_type(name)
-        # Upsert remaining
-        for t in custom_types:
-            name = str(t.get("name", "")).strip()
-            if not name:
-                continue
-            store.save_custom_type(
-                name=name,
-                label=str(t.get("label", name)),
-                description=str(t.get("description", "")),
-                color=str(t.get("color", "#64748b")),
-            )
-        return
-
+def save_custom_types(custom_types: list[dict[str, Any]]) -> None:
     import yaml
-
     from kb_mcp_lite.config import config_path, load_config
 
     p = config_path()
@@ -133,9 +109,11 @@ def save_custom_types(custom_types: list[dict[str, Any]], store: SqliteStore | N
 
 def get_all_types(store: SqliteStore | None = None) -> list[dict[str, Any]]:
     # Start with built-in types
-    type_map: dict[str, dict[str, Any]] = {t["name"]: dict(t) for t in BUILTIN_TYPES}
-    # Merge custom types from vault store or config
-    for ct in get_custom_types(store):
+    type_map: dict[str, dict[str, Any]] = {
+        t["name"]: dict(t) for t in BUILTIN_TYPES
+    }
+    # Merge custom types from config
+    for ct in get_custom_types():
         name = str(ct.get("name", "")).strip()
         if not name:
             continue
@@ -191,6 +169,7 @@ def get_all_types(store: SqliteStore | None = None) -> list[dict[str, Any]]:
 def get_doc_type_names(store: SqliteStore | None = None) -> list[str]:
     all_types = get_all_types(store)
     return [t["name"] for t in all_types]
+
 
 
 def create_default_store() -> SqliteStore:
@@ -289,6 +268,25 @@ def patch_document(
     return store.update(doc_id, **fields)
 
 
+def doc_row(store: SqliteStore, doc: Document) -> dict[str, Any]:
+    return {
+        "doc": doc,
+        "outlinks": len(store.outlinks(doc.id)),
+        "backlinks": len(store.backlinks(doc.id)),
+    }
+
+
+def doc_form_data(doc: Document) -> dict[str, Any]:
+    return {
+        "id": doc.id,
+        "type": doc.type,
+        "title": doc.title,
+        "tags": ", ".join(doc.tags),
+        "source": doc.source or "",
+        "body": doc.body,
+    }
+
+
 def count_links(store: SqliteStore) -> int:
     return int(store._conn.execute("SELECT COUNT(*) FROM links").fetchone()[0])
 
@@ -320,6 +318,10 @@ def serialize_hit(hit: SearchHit) -> dict[str, Any]:
 
 def json_error(message: str, *, status_code: int = 400) -> JSONResponse:
     return JSONResponse({"ok": False, "error": message}, status_code=status_code)
+
+
+def flash_url(base: str, kind: str, message: str) -> str:
+    return f"{base}?{urlencode({'flash': kind, 'message': message})}"
 
 
 def overview_payload(store: SqliteStore) -> dict[str, Any]:
@@ -378,22 +380,27 @@ def schema_version(store: SqliteStore) -> str:
 __all__ = [
     "BUILTIN_TYPES",
     "DOC_TYPES",
-    "count_links",
+    "SEARCH_MODES",
     "create_default_store",
-    "create_document",
-    "filtered_documents",
-    "get_all_types",
-    "get_custom_types",
-    "get_doc_type_names",
-    "json_error",
-    "list_links",
     "open_store",
-    "overview_payload",
-    "patch_document",
-    "save_custom_types",
-    "schema_version",
-    "serialize_doc",
-    "serialize_hit",
-    "serialize_link",
     "split_tags",
+    "filtered_documents",
+    "create_document",
+    "patch_document",
+    "doc_row",
+    "doc_form_data",
+    "count_links",
+    "list_links",
+    "serialize_doc",
+    "serialize_link",
+    "serialize_hit",
+    "json_error",
+    "flash_url",
+    "overview_payload",
+    "schema_version",
+    "get_custom_types",
+    "save_custom_types",
+    "get_all_types",
+    "get_doc_type_names",
 ]
+

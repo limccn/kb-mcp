@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import httpx
 import pytest
+import httpx
 
 from kb_mcp_lite.reranker import (
     HttpReranker,
@@ -19,6 +19,7 @@ from kb_mcp_lite.reranker import (
 from kb_mcp_lite.schema import Document
 from kb_mcp_lite.store.sqlite import SqliteStore
 from kb_mcp_lite.vault import VaultManager
+
 
 # ---------------------------------------------------------------------------
 # RerankConfig & Endpoints
@@ -295,7 +296,6 @@ def test_store_search_with_rerank(tmp_path: Path) -> None:
 
 def test_cli_search_with_rerank(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from click.testing import CliRunner
-
     from kb_mcp_lite.cli import cli
 
     monkeypatch.setenv("KB_MCP_HOME", str(tmp_path))

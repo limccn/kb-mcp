@@ -1,0 +1,8 @@
+# Runtime artifacts of the exe; kb-mcp.exe itself IS tracked on purpose.
+data/
+tmp/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite

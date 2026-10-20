@@ -43,7 +43,7 @@ class _HashingEmbedder(Embedder):
         # 0..255 value, normalise to [-1, 1]. Pad/truncate to ``dim``.
         text = text.lower()
         out: list[float] = []
-        for i in range(max(1, len(text) - 2)):
+        for i in range(0, max(1, len(text) - 2)):
             h = hashlib.md5(text[i : i + 3].encode("utf-8")).digest()
             out.append((h[0] - 128) / 128.0)
         if not out:

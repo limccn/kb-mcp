@@ -1,7 +1,7 @@
 """Tests for trigram (fuzzy) search introduced in v0.2 (migration 0002).
 
 Covers the three modes (``lexical``, ``fuzzy``, ``hybrid``) end-to-end on a
-real SqliteStore, plus the SqliteStore-internal search/\u200b_search_fts/\u200b_search_hybrid
+real SqliteStore, plus the SqliteStore-internal search/​_search_fts/​_search_hybrid
 helpers.
 """
 

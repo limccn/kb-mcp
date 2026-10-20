@@ -1,0 +1,558 @@
+{% extends "base.html" %}
+{% block title %}图谱 · kb-mcp admin{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1>文档图谱</h1>
+    <p>交互式文档关系图。</p>
+  </div>
+  <div class="header-meta" id="graph-stats"></div>
+</header>
+
+<section class="graph-toolbar">
+  <div class="graph-toolbar-left">
+    <form id="subgraph-form" class="graph-search-form">
+      <input
+        type="text"
+        id="graph-search-input"
+        placeholder="文档 ID 或标题…"
+        class="graph-search-input"
+      />
+      <select id="graph-depth-select" class="graph-depth-select">
+        <option value="1">深度 1</option>
+        <option value="2" selected>深度 2</option>
+        <option value="3">深度 3</option>
+        <option value="4">深度 4</option>
+      </select>
+      <button type="submit" class="button secondary small-button">聚焦</button>
+      <button type="button" id="graph-reset-btn" class="button ghost small-button">重置</button>
+    </form>
+  </div>
+  <div class="graph-controls">
+    <label class="graph-legend-item">
+      <input type="checkbox" id="toggle-physics" checked />
+      <span>物理引擎</span>
+    </label>
+    <div class="graph-legend" id="type-legend"></div>
+  </div>
+</section>
+
+<div id="graph-subgraph-badge" class="graph-subgraph-badge" style="display:none;"></div>
+
+<div id="graph-container"></div>
+
+<div id="graph-tooltip" class="graph-tooltip"></div>
+
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<script>
+// All state lives inside this function scope so the script can be safely
+// re-executed by the SPA router on repeated visits (top-level `let`/`const`
+// would otherwise throw "Identifier has already been declared" and break the page).
+(function initGraphPage() {
+let network = null;
+let currentMode = "full";
+let currentGraphData = null;
+
+// Color palette for different document types
+const typeColors = {
+  project: "#3b82f6",
+  decision: "#8b5cf6",
+  lesson: "#10b981",
+  glossary: "#f59e0b",
+  person: "#ec4899",
+  faq: "#06b6d4",
+  api: "#6366f1",
+  runbook: "#f43f5e",
+  release: "#14b8a6",
+  default: "#64748b"
+};
+
+async function loadGraph(rootId, depth) {
+  let url = "/api/graph";
+  if (rootId) {
+    url += `?root_id=${encodeURIComponent(rootId)}&depth=${depth}`;
+  }
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    throw new Error(`Graph API error: ${resp.status}`);
+  }
+  return resp.json();
+}
+
+function showGraphLoading() {
+  const container = document.getElementById("graph-container");
+  container.innerHTML =
+    '<div class="graph-loading"><span class="graph-spinner"></span><span>加载图谱中…</span></div>';
+}
+
+function showGraphError(message) {
+  const container = document.getElementById("graph-container");
+  const msg = String(message || "unknown error").replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+  );
+  container.innerHTML =
+    `<div class="graph-loading">⚠️ 加载图谱失败: ${msg}</div>`;
+}
+
+function getNodeColor(type) {
+  return typeColors[type] || typeColors.default;
+}
+
+function buildNetwork(graphData) {
+  const { nodes, edges } = graphData;
+  const container = document.getElementById("graph-container");
+  container.replaceChildren(); // clear loading placeholder / stale canvas
+  
+  // Detect dark mode
+  const isDark = document.documentElement.classList.contains("dark");
+  const nodeFontColor = isDark ? "#e2e8f0" : "#1e293b";
+  const edgeFontColor = isDark ? "#94a3b8" : "#64748b";
+  const edgeColor = isDark ? "#475569" : "#cbd5e1";
+  const edgeHoverColor = isDark ? "#60a5fa" : "#3b82f6";
+  const nodeBorderColor = isDark ? "#1e293b" : "#ffffff";
+  const hoverBorderColor = isDark ? "#60a5fa" : "#3b82f6";
+  const selectedBorderColor = isDark ? "#818cf8" : "#6366f1";
+
+  // Stats
+  document.getElementById("graph-stats").innerHTML =
+    `<span class="meta-chip">${nodes.length} 个文档</span>` +
+    `<span class="meta-chip">${edges.length} 条链接</span>`;
+
+  // Type legend
+  const typeSet = new Map();
+  nodes.forEach(n => {
+    if (!typeSet.has(n.type)) typeSet.set(n.type, getNodeColor(n.type));
+  });
+  const legend = document.getElementById("type-legend");
+  legend.innerHTML = "";
+  typeSet.forEach((color, type) => {
+    const chip = document.createElement("span");
+    chip.className = "graph-legend-chip";
+    chip.innerHTML = `<i style="background:${color}"></i>${type}`;
+    legend.appendChild(chip);
+  });
+
+  // Calculate node degrees (connections)
+  const degrees = {};
+  edges.forEach(e => {
+    degrees[e.from] = (degrees[e.from] || 0) + 1;
+    degrees[e.to] = (degrees[e.to] || 0) + 1;
+  });
+
+  // Process nodes - add color based on type & scale by connection degree
+  const processedNodes = nodes.map(n => {
+    const deg = degrees[n.id] || 0;
+    const baseSize = 14 + Math.min(deg * 3, 20); // Scale from 14 to 34
+    return {
+      ...n,
+      size: baseSize,
+      color: {
+        background: getNodeColor(n.type),
+        border: nodeBorderColor,
+        hover: { background: getNodeColor(n.type), border: hoverBorderColor },
+        highlight: { background: getNodeColor(n.type), border: selectedBorderColor }
+      },
+      font: {
+        enabled: true,
+        color: nodeFontColor,
+        face: "Inter, Segoe UI, sans-serif",
+        size: 13 + Math.min(deg * 0.5, 5),
+        strokeWidth: 3,
+        strokeColor: isDark ? "#0f172a" : "#ffffff"
+      },
+      shadow: {
+        enabled: true,
+        color: isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.12)",
+        size: 10,
+        x: 0,
+        y: 3
+      }
+    };
+  });
+
+  // Process edges
+  const processedEdges = edges.map(e => ({
+    ...e,
+    color: {
+      color: edgeColor,
+      highlight: edgeHoverColor,
+      hover: edgeHoverColor,
+      opacity: 0.6
+    },
+    font: {
+      enabled: true,
+      color: edgeFontColor,
+      background: "none",
+      strokeWidth: 0,
+      size: 10
+    },
+    smooth: {
+      type: "cubicBezier",
+      forceDirection: "none",
+      roundness: 0.4
+    },
+    shadow: false
+  }));
+
+  if (network) {
+    network.destroy();
+  }
+
+  network = new vis.Network(container, { nodes: processedNodes, edges: processedEdges }, {
+    nodes: {
+      shape: "dot",
+      size: 16,
+      borderWidth: 2,
+      borderWidthSelected: 3,
+      chosen: { 
+        node: (values) => { 
+          values.size = 22;
+          values.borderWidth = 3;
+        } 
+      },
+    },
+    edges: {
+      arrows: { 
+        to: { 
+          enabled: true, 
+          scaleFactor: 0.5,
+          type: "arrow"
+        } 
+      },
+      width: 1.5,
+    },
+    physics: {
+      enabled: document.getElementById("toggle-physics").checked,
+      solver: "forceAtlas2Based",
+      forceAtlas2Based: {
+        gravitationalConstant: -50,
+        centralGravity: 0.01,
+        springLength: 120,
+        springConstant: 0.06,
+        damping: 0.4,
+        avoidOverlap: 0.8
+      },
+      stabilization: { 
+        iterations: 300,
+        fit: true
+      },
+      minVelocity: 0.75
+    },
+    interaction: {
+      hover: true,
+      tooltipDelay: 150,
+      zoomView: true,
+      dragView: true,
+      navigationButtons: false,
+      keyboard: {
+        enabled: true,
+        bindToWindow: false
+      },
+      hideEdgesOnDrag: true,
+      hideEdgesOnZoom: true,
+      multiselect: false,
+      selectConnectedEdges: true
+    },
+    layout: {
+      improvedLayout: true,
+      hierarchical: false
+    }
+  });
+
+  // Hover effects
+  network.on("hoverNode", (params) => {
+    container.style.cursor = "pointer";
+  });
+
+  network.on("blurNode", (params) => {
+    container.style.cursor = "default";
+  });
+
+  // Click → navigate (SPA aware)
+  network.on("click", (params) => {
+    if (params.nodes.length === 1) {
+      const nodeId = params.nodes[0];
+      const node = nodes.find(n => n.id === nodeId);
+      if (node && node.url) {
+        if (window.SPA && typeof window.SPA.navigate === 'function') {
+          window.SPA.navigate(node.url);
+        } else if (window.location) {
+          window.location.href = node.url;
+        }
+      }
+    }
+  });
+
+  // Double click → focus on node
+  network.on("doubleClick", (params) => {
+    if (params.nodes.length === 1) {
+      const nodeId = params.nodes[0];
+      network.focus(nodeId, {
+        scale: 1.5,
+        animation: {
+          duration: 500,
+          easingFunction: "easeInOutQuad"
+        }
+      });
+    }
+  });
+}
+
+async function focusSubgraph(rootId, depth) {
+  document.getElementById("graph-subgraph-badge").style.display = "none";
+  showGraphLoading();
+  try {
+    const data = await loadGraph(rootId, depth);
+    currentGraphData = data;
+    buildNetwork(data);
+    currentMode = "subgraph";
+    document.getElementById("graph-subgraph-badge").innerHTML =
+      `子图: <strong>${rootId}</strong> (深度 ${depth}) &mdash; ${data.nodes.length} 个文档, ${data.edges.length} 条链接`;
+    document.getElementById("graph-subgraph-badge").style.display = "block";
+  } catch (err) {
+    showGraphError(err && err.message || err);
+  }
+}
+
+async function resetGraph() {
+  document.getElementById("graph-subgraph-badge").style.display = "none";
+  showGraphLoading();
+  try {
+    const data = await loadGraph();
+    currentGraphData = data;
+    buildNetwork(data);
+    currentMode = "full";
+  } catch (err) {
+    showGraphError(err && err.message || err);
+  }
+}
+
+// ── Initial load ──────────────────────────────────────────────────────
+resetGraph();
+
+// ── Subgraph form ─────────────────────────────────────────────────────
+document.getElementById("subgraph-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = document.getElementById("graph-search-input").value.trim();
+  if (!input) return;
+
+  const depth = parseInt(document.getElementById("graph-depth-select").value, 10);
+  let rootId = input;
+
+  if (!input.includes("/")) {
+    try {
+      const searchResp = await fetch(`/api/search?query=${encodeURIComponent(input)}&limit=1`);
+      const searchData = await searchResp.json();
+      if (searchData.items && searchData.items.length > 0) {
+        rootId = searchData.items[0].id;
+      }
+    } catch {}
+  }
+
+  await focusSubgraph(rootId, depth);
+});
+
+document.getElementById("graph-reset-btn").addEventListener("click", resetGraph);
+
+// ── Physics toggle ────────────────────────────────────────────────────
+document.getElementById("toggle-physics").addEventListener("change", (e) => {
+  if (network) {
+    network.setOptions({ physics: { enabled: e.target.checked } });
+  }
+});
+
+// ── Theme change listener ─────────────────────────────────────────────
+// The window listener is registered exactly once per page load; each
+// (re)execution of this script merely repoints the handler, so a theme
+// switch rebuilds the current graph once — no listener stacking.
+window.__graphThemeHandler = function () {
+  if (currentGraphData) {
+    buildNetwork(currentGraphData);
+  }
+};
+if (!window.__graphThemeBound) {
+  window.__graphThemeBound = true;
+  window.addEventListener("themechange", function () {
+    if (typeof window.__graphThemeHandler === "function") {
+      window.__graphThemeHandler();
+    }
+  });
+}
+
+// ── Close the initialisation scope ────────────────────────────────────
+})();
+</script>
+
+<style>
+#graph-container {
+  width: 100%;
+  height: calc(100vh - 220px);
+  min-height: 500px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  transition: background 0.2s;
+}
+
+.graph-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 100%;
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
+
+.graph-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: graph-spin 0.8s linear infinite;
+}
+
+@keyframes graph-spin {
+  to { transform: rotate(360deg); }
+}
+
+.graph-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.graph-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.graph-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.graph-search-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.graph-search-input {
+  width: 200px !important;
+  min-height: 36px !important;
+  padding: 6px 10px !important;
+}
+
+.graph-depth-select {
+  width: auto !important;
+  min-height: 36px !important;
+  padding: 6px 10px !important;
+}
+
+.graph-subgraph-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--primary);
+}
+
+.graph-legend {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.graph-legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--foreground);
+  font-weight: 500;
+  padding: 3px 8px;
+  background: var(--muted);
+  border-radius: 9999px;
+}
+
+.graph-legend-chip i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.graph-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--foreground);
+  cursor: pointer;
+  user-select: none;
+}
+
+.graph-legend-item input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+.graph-tooltip {
+  position: fixed;
+  padding: 8px 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  font-size: 13px;
+  color: var(--foreground);
+  pointer-events: none;
+  z-index: 1000;
+  display: none;
+}
+
+.vis-network:focus {
+  outline: none;
+}
+
+/* Navigation buttons styling */
+.vis-navigation {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+}
+
+.vis-button {
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: var(--radius) !important;
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: var(--shadow) !important;
+}
+
+.vis-button:hover {
+  background: var(--muted) !important;
+}
+</style>
+{% endblock %}

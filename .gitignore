@@ -21,4 +21,3 @@ build/
 .dsh-browser
 web/node_modules/
 web/dist/
-docs

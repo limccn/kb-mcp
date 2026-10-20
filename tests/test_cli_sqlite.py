@@ -17,6 +17,7 @@ from click.testing import CliRunner
 from kb_mcp_lite.cli import cli
 from kb_mcp_lite.store.sqlite import SqliteStore
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

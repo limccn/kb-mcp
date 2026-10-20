@@ -1,0 +1,405 @@
+{% extends "base.html" %}
+{% block title %}调度管理 · kb-mcp admin{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1>调度管理</h1>
+    <p>管理和监控自动化维护任务。</p>
+  </div>
+  <button class="button secondary" onclick="refreshScheduler()">
+    <span class="button-text">刷新</span>
+    <span class="button-spinner"></span>
+  </button>
+</header>
+
+<section class="stats-grid">
+  <article class="stat-panel">
+    <span>状态</span>
+    <strong id="scheduler-status">加载中...</strong>
+  </article>
+  <article class="stat-panel">
+    <span>运行中</span>
+    <strong id="scheduler-running">-</strong>
+  </article>
+  <article class="stat-panel">
+    <span>历史记录</span>
+    <strong id="history-count">-</strong>
+  </article>
+</section>
+
+<div class="split-grid">
+  <!-- Left Side: Tasks -->
+  <div class="panel-list">
+    <section class="panel">
+      <div class="panel-head"><h2>任务列表</h2></div>
+      <div class="list compact" id="tasks-list">
+        <div class="empty-state">
+          <div class="empty-state-title">加载任务中...</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Right Side: History -->
+  <div class="panel-list">
+    <section class="panel">
+      <div class="panel-head"><h2>执行历史</h2></div>
+      <div class="list compact" id="history-list">
+        <div class="empty-state">
+          <div class="empty-state-title">加载历史记录...</div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- Edit Task Modal -->
+<div id="task-modal" class="modal" style="display: none;">
+  <div class="modal-overlay" onclick="closeModal()"></div>
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2>编辑调度</h2>
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+    </div>
+    <form id="task-form" onsubmit="saveTask(event)">
+      <input type="hidden" id="task-edit-name" value="">
+      
+      <div class="form-group">
+        <label>任务名称</label>
+        <input type="text" id="task-display-name" class="form-input" disabled>
+      </div>
+      
+      <div class="form-group">
+        <label for="task-interval">执行间隔 (如 30m, 5s, 2h)</label>
+        <input type="text" id="task-interval" placeholder="30m" class="form-input">
+        <small>使用 s/m/h 表示秒/分钟/小时。如使用 Cron 表达式则留空。</small>
+      </div>
+      
+      <div class="form-group">
+        <label for="task-cron">Cron 表达式</label>
+        <input type="text" id="task-cron" placeholder="0 3 * * *" class="form-input">
+        <small>标准 Cron 格式：分 时 日 月 周。如使用执行间隔则留空。</small>
+      </div>
+      
+      <div class="form-group">
+        <label for="task-enabled">
+          <input type="checkbox" id="task-enabled" checked>
+          启用
+        </label>
+      </div>
+      
+      <div class="form-actions">
+        <button type="button" class="button secondary" onclick="closeModal()">取消</button>
+        <button type="submit" class="button primary" id="task-submit-btn">
+          <span class="button-text">保存</span>
+          <span class="button-spinner"></span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function initSchedulerPage() {
+  let currentEditingTask = null;
+
+  async function refreshScheduler() {
+    try {
+      // Fetch scheduler status
+      const statusRes = await fetch('/api/scheduler/status');
+      const statusData = await statusRes.json();
+      
+      const statusEl = document.getElementById('scheduler-status');
+      if (statusEl) statusEl.textContent = statusData.running ? 'Running' : 'Stopped';
+      const runningEl = document.getElementById('scheduler-running');
+      if (runningEl) runningEl.textContent = statusData.jobs ? statusData.jobs.length + ' jobs' : '0 jobs';
+      const historyEl = document.getElementById('history-count');
+      if (historyEl) historyEl.textContent = statusData.history_count || '0';
+
+      // Fetch tasks list
+      const tasksRes = await fetch('/api/scheduler/tasks');
+      const tasksData = await tasksRes.json();
+      
+      const tasksList = document.getElementById('tasks-list');
+      if (tasksList) {
+        if (tasksData.tasks && tasksData.tasks.length > 0) {
+          tasksList.innerHTML = tasksData.tasks.map(task => `
+            <div class="list-row">
+              <div>
+                <div class="row-title">${task.name}</div>
+                <div class="row-meta">${task.description || 'No description'}</div>
+                <div class="row-meta">
+                  ${task.interval ? 'Interval: ' + task.interval : ''}
+                  ${task.cron ? 'Cron: ' + task.cron : ''}
+                  ${task.consecutive_failures > 0 ? '· Failures: ' + task.consecutive_failures : ''}
+                </div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <span class="status-pill ${!task.disabled ? 'status-ok' : 'status-bad'}">${!task.disabled ? '已启用' : '已停用'}</span>
+                <button class="button secondary small-button" onclick="runTask('${task.name}')" title="立即运行">▶</button>
+                <button class="button secondary small-button" onclick="editTask('${task.name}')" title="编辑调度">✎</button>
+                <button class="button ${task.disabled ? 'primary' : 'secondary'} small-button" onclick="toggleTask('${task.name}', ${task.disabled})" title="${task.disabled ? '启用' : '停用'}">
+                  ${task.disabled ? '启用' : '停用'}
+                </button>
+              </div>
+            </div>
+          `).join('');
+        } else {
+          tasksList.innerHTML = '<div class="empty-state"><div class="empty-state-title">暂无配置的任务</div></div>';
+        }
+      }
+
+      // Fetch history
+      const historyRes = await fetch('/api/scheduler/history');
+      const historyData = await historyRes.json();
+      
+      const historyList = document.getElementById('history-list');
+      if (historyList) {
+        if (historyData.history && historyData.history.length > 0) {
+          historyList.innerHTML = historyData.history.map(record => `
+            <div class="list-row">
+              <div>
+                <div class="row-title">${record.task_name}</div>
+                <div class="row-meta">${record.started_at} · ${record.duration_ms || 0}ms · ${record.triggered_by || 'unknown'}</div>
+              </div>
+              <span class="status-pill ${record.status === 'ok' ? 'status-ok' : 'status-bad'}">${record.status}</span>
+            </div>
+          `).join('');
+        } else {
+          historyList.innerHTML = '<div class="empty-state"><div class="empty-state-title">暂无执行历史</div></div>';
+        }
+      }
+    } catch (error) {
+      showToast('error', '刷新失败', error.message);
+    }
+  }
+
+  async function runTask(taskName) {
+    try {
+      const res = await fetch('/api/scheduler/run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({task_name: taskName})
+      });
+      const data = await res.json();
+      
+      if (data.ok) {
+        showToast('success', `任务 "${taskName}" 已启动`);
+        setTimeout(refreshScheduler, 1000);
+      } else {
+        showToast('error', '任务启动失败', data.error || '未知错误');
+      }
+    } catch (error) {
+      showToast('error', '任务启动失败', error.message);
+    }
+  }
+
+  async function toggleTask(taskName, currentlyDisabled) {
+    try {
+      const action = currentlyDisabled ? 'enable' : 'disable';
+      const res = await fetch(`/api/scheduler/tasks/${taskName}/${action}`, {
+        method: 'POST'
+      });
+      const data = await res.json();
+      
+      if (data.ok) {
+        showToast('success', `任务 "${taskName}" 已${currentlyDisabled ? '启用' : '停用'}`);
+        refreshScheduler();
+      } else {
+        showToast('error', `操作失败`, data.error || '未知错误');
+      }
+    } catch (error) {
+      showToast('error', '操作失败', error.message);
+    }
+  }
+
+  async function editTask(taskName) {
+    try {
+      const res = await fetch('/api/scheduler/tasks');
+      const data = await res.json();
+      const task = data.tasks.find(t => t.name === taskName);
+      
+      if (!task) {
+        showToast('error', '任务未找到');
+        return;
+      }
+      
+      currentEditingTask = taskName;
+      document.getElementById('task-edit-name').value = taskName;
+      document.getElementById('task-display-name').value = taskName + ' - ' + (task.description || '');
+      document.getElementById('task-interval').value = task.config?.interval || '';
+      document.getElementById('task-cron').value = task.config?.cron || '';
+      document.getElementById('task-enabled').checked = !task.disabled;
+      
+      document.getElementById('task-modal').style.display = 'flex';
+    } catch (error) {
+      showToast('error', '加载任务失败', error.message);
+    }
+  }
+
+  async function saveTask(event) {
+    event.preventDefault();
+    
+    const taskName = currentEditingTask;
+    const interval = document.getElementById('task-interval').value;
+    const cron = document.getElementById('task-cron').value;
+    const enabled = document.getElementById('task-enabled').checked;
+    
+    if (!interval && !cron) {
+      showToast('error', '请指定执行间隔或 Cron 表达式');
+      return;
+    }
+    
+    const payload = { enabled };
+    if (interval) payload.interval = interval;
+    if (cron) payload.cron = cron;
+    
+    try {
+      const res = await fetch(`/api/scheduler/tasks/${taskName}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      
+      const data = await res.json();
+      
+      if (data.ok) {
+        showToast('success', '任务已更新');
+        closeModal();
+        refreshScheduler();
+      } else {
+        showToast('error', '保存失败', data.error || '未知错误');
+      }
+    } catch (error) {
+      showToast('error', '保存失败', error.message);
+    }
+  }
+
+  function closeModal() {
+    const modal = document.getElementById('task-modal');
+    if (modal) modal.style.display = 'none';
+    currentEditingTask = null;
+  }
+
+  // Expose methods for HTML event attributes
+  window.refreshScheduler = refreshScheduler;
+  window.runTask = runTask;
+  window.toggleTask = toggleTask;
+  window.editTask = editTask;
+  window.saveTask = saveTask;
+  window.closeModal = closeModal;
+
+  // Initial load
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', refreshScheduler);
+  } else {
+    refreshScheduler();
+  }
+})();
+</script>
+
+<style>
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.modal-content {
+  position: relative;
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: var(--space-6);
+  width: 100%;
+  max-width: 500px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-6);
+}
+
+.modal-header h2 {
+  margin: 0;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: var(--muted-foreground);
+  padding: 0;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  color: var(--foreground);
+}
+
+.form-group {
+  margin-bottom: var(--space-4);
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.form-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  background: var(--card);
+  color: var(--foreground);
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-group small {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+}
+</style>
+{% endblock %}

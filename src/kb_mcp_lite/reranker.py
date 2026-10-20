@@ -360,12 +360,12 @@ def make_reranker(config: RerankConfig | None = None) -> Reranker:
 
 
 __all__ = [
-    "HttpReranker",
-    "NullReranker",
     "RerankConfig",
     "RerankError",
     "RerankItem",
     "Reranker",
+    "NullReranker",
+    "HttpReranker",
     "load_rerank_config",
     "make_reranker",
 ]

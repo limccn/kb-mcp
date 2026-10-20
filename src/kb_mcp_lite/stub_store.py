@@ -41,15 +41,14 @@ predictably in tests:
 
 from __future__ import annotations
 
-import builtins
-from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from typing import cast
+from collections.abc import Iterable
 
 from kb_mcp_lite.schema import (
+    Document,
     DoctorCheck,
     DoctorReport,
-    Document,
     DuplicateError,
     ImportReport,
     Link,
@@ -58,6 +57,7 @@ from kb_mcp_lite.schema import (
     ValidationError,
     make_id,
 )
+import builtins
 
 # NOTE: ``Store`` is the Protocol defined in ``kb_mcp_lite.store``. We do not
 # import it here — in Wave 1A the ``kb_mcp_lite.store`` namespace became a
@@ -123,6 +123,7 @@ class StubStore(_Store):
 
     def init(self) -> None:
         """Initialize the store (no-op for StubStore)."""
+        pass
 
     def add(self, doc: Document) -> str:
         """Insert a new document; auto-generate id when empty.
@@ -241,7 +242,7 @@ class StubStore(_Store):
 
     def list(
         self,
-        type: str | None = None,
+        type: str | None = None,  # noqa: A002
         tags: builtins.list[str] | None = None,
         link_to: str | None = None,
         link_from: str | None = None,
@@ -286,7 +287,7 @@ class StubStore(_Store):
     def search(
         self,
         query: str,
-        type: str | None = None,
+        type: str | None = None,  # noqa: A002
         tags: builtins.list[str] | None = None,
         limit: int = 10,
         fuzzy: bool = False,
@@ -566,6 +567,7 @@ class StubStore(_Store):
 
     def reindex(self) -> None:
         """Rebuild search index (no-op for StubStore)."""
+        pass
 
     def reindex_embeddings(self, progress_callback=None) -> int:
         """Recompute embeddings (no-op for StubStore)."""

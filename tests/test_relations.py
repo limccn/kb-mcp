@@ -1,5 +1,6 @@
 """Tests for the typed relation vocabulary and impact analyzer (v0.8 特性 #6)."""
 
+from kb_mcp_lite.schema import Document
 from kb_mcp_lite.relations import (
     STANDARD_RELATIONS,
     ImpactAnalyzer,
@@ -7,8 +8,8 @@ from kb_mcp_lite.relations import (
     resolve_relation,
     supersession_chain,
 )
-from kb_mcp_lite.schema import Document
 from kb_mcp_lite.store.sqlite import SqliteStore
+
 
 # ---------------------------------------------------------------------------
 # RelationSpec
@@ -17,7 +18,7 @@ from kb_mcp_lite.store.sqlite import SqliteStore
 
 class TestRelationSpec:
     def test_standard_relations_count(self):
-        assert len(STANDARD_RELATIONS) == 10
+        assert len(STANDARD_RELATIONS) == 11
 
     def test_relates_to_is_bidirectional(self):
         spec = STANDARD_RELATIONS["relates-to"]
@@ -39,6 +40,17 @@ class TestRelationSpec:
     def test_references_is_not_influence(self):
         spec = STANDARD_RELATIONS["references"]
         assert spec.is_influence is False
+
+    def test_contains_is_tree_relation(self):
+        """contains: tree edge kb ingest generates (design D1)."""
+        spec = STANDARD_RELATIONS["contains"]
+        assert spec.forward_label == "包含了"
+        assert spec.backward_label == "隶属于"
+        assert spec.default_direction == "forward"
+        assert spec.traversal_cost == 0.5
+        assert spec.is_influence is False
+        assert spec.is_supersession is False
+        assert spec.description == "目录树关系，kb ingest 生成"
 
     def test_get_relation_spec_known(self):
         assert get_relation_spec("supersedes") is STANDARD_RELATIONS["supersedes"]
